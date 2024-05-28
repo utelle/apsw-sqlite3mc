@@ -10771,6 +10771,8 @@ test_types_vals = (
     True,  # derived from integer
     False)
 
+from .mctests import *
+
 if __name__ == '__main__':
     setup()
 
