@@ -21,6 +21,9 @@ class MultipleCiphers(unittest.TestCase):
         self.cleanup()
         self.db = apsw.Connection("mcdb")
 
+        # temporary workaround for https://github.com/utelle/SQLite3MultipleCiphers/issues/156
+        self.db.pragma("mmap_size", 0)
+
     def testBasic(self):
         self.assertTrue(hasattr(apsw, "mc_version"))
 
