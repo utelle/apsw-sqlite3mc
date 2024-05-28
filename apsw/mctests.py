@@ -13,7 +13,7 @@ class MultipleCiphers(unittest.TestCase):
         for c in apsw.connections():
             c.close()
         gc.collect()
-        for suffix in "", "-wal", "-journal":
+        for suffix in "", "-wal", "-journal", "-shm":
             if os.path.exists("mcdb" + suffix):
                 os.remove("mcdb" + suffix)
 
