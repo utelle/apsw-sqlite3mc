@@ -4,6 +4,7 @@ include src/*.c
 include src/faultinject.h
 include src/apswversion.h
 include src/apsw.docstrings
+include sqlite3/sqlite3.c
 
 # other files
 include apsw/__init__.pyi
@@ -12,6 +13,7 @@ include apsw/shell.py
 include apsw/speedtest.py
 include apsw/trace.py
 include apsw/tests.py
+include apsw/mctests.py
 include apsw/ext.py
 
 include LICENSE
