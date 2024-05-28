@@ -40,10 +40,11 @@ Usage
 
 Use as you would regular `APSW
 <https://rogerbinns.github.io/apsw/>`__.  You can check the version of
-SQLite3 Multiple Ciphers with ``apsw.mc_version``.  which
+SQLite3 Multiple Ciphers with ``apsw.mc_version``.
 
 For encrypted databases you need to use the relevant `pragmas
-<https://utelle.github.io/SQLite3MultipleCiphers/docs/configuration/config_sql_pragmas/>`__.::
+<https://utelle.github.io/SQLite3MultipleCiphers/docs/configuration/config_sql_pragmas/>`__
+to set a passphrase based key, or a binary bytes based key::
 
   connection.pragma("key", "my secret passphrase")
   connection.pragma("hexkey", b"\xfe\x23\x9e\x77".hex())
