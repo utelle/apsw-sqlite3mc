@@ -2,8 +2,6 @@
 testdb2
 apsw/*.pyd
 TAGS
-sqlite3async.h
-sqlite3async.c
 callgrind.out.*
 :memory:
 doc/vfs.rst
@@ -29,9 +27,6 @@ testdbx
 *.gcov
 build/
 dist/
-sqlite3.h
-sqlite3.c
-sqlite3ext.h
 MANIFEST
 MANIFEST.in.tmp
 megatestresults/
