@@ -64,11 +64,9 @@ if patch:
 ##
 
 project_urls = {
-    "Changelog": "https://rogerbinns.github.io/apsw/changes.html",
-    "Documentation": "https://rogerbinns.github.io/apsw/",
-    "Issue Tracker": "https://github.com/rogerbinns/apsw/issues",
-    "Code": "https://github.com/rogerbinns/apsw",
-    "Example": "https://rogerbinns.github.io/apsw/example.html"
+    "Documentation": "https://utelle.github.io/SQLite3MultipleCiphers/",
+    "Issue Tracker": "https://github.com/utelle/apsw-sqlite3mc/issues",
+    "Code": "https://github.com/utelle/apsw-sqlite3mc",
 }
 
 
@@ -844,12 +842,12 @@ if __name__ == '__main__':
     setup(name="apsw",
           version=version,
           python_requires=">=3.8",
-          description="Another Python SQLite Wrapper",
+          description="SQLite3 Multiple Ciphers combined with Another Python SQLite Wrapper with ",
           long_description=pathlib.Path("README.rst").read_text(encoding="utf8"),
           long_description_content_type="text/x-rst",
-          author="Roger Binns",
-          author_email="rogerb@rogerbinns.com",
-          url="https://github.com/rogerbinns/apsw/",
+          author="Ulrich Telle",
+          author_email="github@telle-online.de",
+          url="https://github.com/utelle/apsw-sqlite3mc",
           project_urls=project_urls,
           classifiers=[
               "Development Status :: 5 - Production/Stable",
@@ -858,8 +856,9 @@ if __name__ == '__main__':
               "Programming Language :: C",
               "Programming Language :: Python :: 3",
               "Topic :: Database :: Front-Ends",
+              "Topic :: Security :: Cryptography",
           ],
-          keywords=["database", "sqlite"],
+          keywords=["database", "sqlite", "encryption"],
           license="OSI Approved",
           platforms="any",
           ext_modules=[
