@@ -826,14 +826,36 @@ def get_icu_config() -> IcuConfig | None:
 
 
 class mc_build_ext(apsw_build_ext):
-    def finalize_options(self):
-        super().finalize_options()
+    # Figure out compiling with AES
 
-        ext = self.extensions[0]
+    def build_extension(self, ext):
+        # We don't know the compiler and extension combination until
+        # here
+        if ext.name != "apsw.__init__":
+            return super().build_extension(ext)
 
-        # turn off hardware AES for the moment
-        ext.define_macros.append(("SQLITE3MC_OMIT_AES_HARDWARE_SUPPORT", "1"))
+        aes_enabled = False
 
+        if self.compiler.compiler_type == "unix":
+            if can_compiler_accept_flag(self.compiler.compiler, "-maes"):
+                ext.extra_compile_args.append("-maes")
+                aes_enabled = True
+            if can_compiler_accept_flag(self.compiler.compiler, "-msse4.2"):
+                ext.extra_compile_args.append("-msse4.2")
+
+        if not aes_enabled:
+            # Dsiable HW AES compilation
+            ext.define_macros.append(("SQLITE3MC_OMIT_AES_HARDWARE_SUPPORT", "1"))
+
+        return super().build_extension(ext)
+
+import tempfile
+def can_compiler_accept_flag(cmdline, flag):
+    with tempfile.TemporaryDirectory("aescheck") as tmpd:
+        with open(os.path.join(tmpd, "aescheck.c"), "wt") as f:
+            f.write("int main(int argc, char **argv) { return 0; }")
+        proc = subprocess.run(cmdline + [flag, "aescheck.c"], cwd=tmpd, capture_output=True)
+        return proc.returncode == 0
 
 # We depend on every .[ch] file in src
 depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c"]
