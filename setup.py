@@ -827,6 +827,16 @@ def get_icu_config() -> IcuConfig | None:
     return None
 
 
+class mc_build_ext(apsw_build_ext):
+    def finalize_options(self):
+        super().finalize_options()
+
+        ext = self.extensions[0]
+
+        # turn off hardware AES for the moment
+        ext.define_macros.append(("SQLITE3MC_OMIT_AES_HARDWARE_SUPPORT", "1"))
+
+
 # We depend on every .[ch] file in src
 depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c"]
 
@@ -866,7 +876,7 @@ if __name__ == '__main__':
               'test': run_tests,
               'build_test_extension': build_test_extension,
               'fetch': fetch,
-              'build_ext': apsw_build_ext,
+              'build_ext': mc_build_ext,
               'build': apsw_build,
               'sdist': apsw_sdist,
           })
