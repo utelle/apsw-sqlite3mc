@@ -843,6 +843,10 @@ class mc_build_ext(apsw_build_ext):
             if can_compiler_accept_flag(self.compiler.compiler, "-msse4.2"):
                 ext.extra_compile_args.append("-msse4.2")
 
+        elif self.compiler.compiler_type == "msvc":
+            # aes needs no extra flags
+            aes_enabled = True
+
         if not aes_enabled:
             # Dsiable HW AES compilation
             ext.define_macros.append(("SQLITE3MC_OMIT_AES_HARDWARE_SUPPORT", "1"))
