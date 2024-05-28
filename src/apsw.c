@@ -2060,6 +2060,8 @@ modules etc. For example::
     }
   }
 
+  PyModule_AddStringConstant(m, "mc_version", SQLITE3MC_VERSION_STRING);
+
   if (!PyErr_Occurred())
   {
     return m;
