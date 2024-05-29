@@ -21,9 +21,6 @@ class MultipleCiphers(unittest.TestCase):
         self.cleanup()
         self.db = apsw.Connection("mcdb")
 
-        # temporary workaround for https://github.com/utelle/SQLite3MultipleCiphers/issues/156
-        self.db.pragma("mmap_size", 0)
-
     def testBasic(self):
         self.assertTrue(hasattr(apsw, "mc_version"))
 
@@ -35,6 +32,14 @@ class MultipleCiphers(unittest.TestCase):
         with open(self.db.filename, "rb") as f:
             prefix = f.read(15)
         self.assertNotEqual(prefix, b"SQLite format 3")
+
+    def testMcIssue156(self):
+        "Check memory mapping"
+        # https://github.com/utelle/SQLite3MultipleCiphers/issues/156
+        self.db.pragma("mmap_size", 2 ** 63)
+        # we can just rerun key check
+        self.testKey()
+
 
     def tearDown(self):
         self.db.close()
