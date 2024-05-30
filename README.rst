@@ -63,6 +63,31 @@ Setting the key is the only change needed to your code.
   >>> con.pragma("key", "my secret passphrase")
   ok
 
+Alternately you can use `URI parameters
+<https://utelle.github.io/SQLite3MultipleCiphers/docs/configuration/config_uri/>`__.
+You need to correctly encode the filename and parameters, and tell
+SQLite that you are using a URI name:
+
+.. code-block:: python
+
+    import urllib.parse
+    import apsw
+
+    uri_filename = urllib.parse.quote("my db filename.sqlite3")
+    uri_parameters = urllib.parse.urlencode(
+        {
+            "cipher": "aes256cbc",
+            "kdf_iter": 8192,
+            "key": "it's a secret",
+        }
+    )
+    con = apsw.Connection(
+        f"file:{uri_filename}?{uri_parameters}",
+        flags=apsw.SQLITE_OPEN_URI
+           | apsw.SQLITE_OPEN_CREATE
+           | apsw.SQLITE_OPEN_READWRITE,
+    )
+
 You can verify your database is encrypted with a hex viewer.  Regular database files
 start with `SQLite format 3` while encrypted database files are random.
 
