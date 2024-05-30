@@ -43,3 +43,11 @@ work/
 .venv/
 compile_commands.json
 .vscode/
+
+# configure detritus
+sqlite3/configure/.deps
+sqlite3/configure/config.log
+sqlite3/configure/config.status
+sqlite3/configure/libtool
+sqlite3/configure/Makefile
+sqlite3/configure/sqlite3.pc
