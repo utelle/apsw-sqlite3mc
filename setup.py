@@ -856,7 +856,6 @@ class mc_build_ext(apsw_build_ext):
         proc = subprocess.run(["env", f"CC={shlex.join(self.compiler.compiler)}",
                                "./configure"], text=True,
                               capture_output=True, cwd="sqlite3/configure/")
-        breakpoint()
         if proc.returncode == 0:
             for line in open("sqlite3/configure/Makefile"):
                 if line.startswith("DEFS ="):
