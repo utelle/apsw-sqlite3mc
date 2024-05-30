@@ -32,11 +32,11 @@ any existing SQLite you may already have on your system.
 Installation
 ------------
 
-Available from `PyPi <https://pypi.org/project/apsw-THENAME/>`__.
+Available from `PyPi <https://pypi.org/project/apsw-sqlite3mc/>`__.
 Binaries are included for most platforms, and pip will build from
 source for the rest.::
 
-    pip install apsw-THENAME
+    pip install apsw-sqlite3mc
 
 Usage
 -----
