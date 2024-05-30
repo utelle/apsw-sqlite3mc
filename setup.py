@@ -883,10 +883,10 @@ def can_compiler_accept_flag(cmdline, flag):
 depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c"]
 
 if __name__ == '__main__':
-    setup(name="apsw",
+    setup(name="apsw-sqlite3mc",
           version=version,
           python_requires=">=3.8",
-          description="SQLite3 Multiple Ciphers combined with Another Python SQLite Wrapper with ",
+          description="SQLite3 Multiple Ciphers combined with Another Python SQLite Wrapper",
           long_description=pathlib.Path("README.rst").read_text(encoding="utf8"),
           long_description_content_type="text/x-rst",
           author="Ulrich Telle",
