@@ -17,7 +17,10 @@ This project packages 3 things together
 `SQLite 3 <https://www.sqlite.org/>`__
 
   Small, fast, self-contained, high-reliability, full-featured, SQL
-  database engine.
+  database engine.  SQLite is configured with `secure delete
+  <https://www.sqlite.org/pragma.html#pragma_secure_delete>`__ turned
+  on, and to use `memory for temporary storage
+  <https://www.sqlite.org/tempfiles.html#the_sqlite_temp_store_compile_time_parameter_and_pragma>`__.
 
 `SQLite3 Multiple Ciphers <https://utelle.github.io/SQLite3MultipleCiphers/>`__
 

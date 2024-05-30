@@ -865,6 +865,10 @@ class mc_build_ext(apsw_build_ext):
                             ext.define_macros.append((parts[0][2:], parts[1]))
                     break
 
+        # We always want temp store in memory and secure delete
+        ext.define_macros.append(("SQLITE_TEMP_STORE", "2"))
+        ext.define_macros.append(("SQLITE_SECURE_DELETE", "1"))
+
         return super().build_extension(ext)
 
 import tempfile

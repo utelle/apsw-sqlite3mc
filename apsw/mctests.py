@@ -40,6 +40,12 @@ class MultipleCiphers(unittest.TestCase):
         # we can just rerun key check
         self.testKey()
 
+    def testCompileOptions(self):
+        "Check secure compilation flags were used"
+        self.assertEqual(self.db.pragma("secure_delete"), 1)
+        self.assertIn("SECURE_DELETE", apsw.compile_options)
+        # temp_store pragma doesn't return compile time value
+        self.assertIn("TEMP_STORE=2", apsw.compile_options)
 
     def tearDown(self):
         self.db.close()
