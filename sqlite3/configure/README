@@ -1,0 +1,11 @@
+SQLite uses GNU configure on Unixish platforms to look for various
+system calls and headers.  If newer calls exist then SQLite uses them,
+otherwise it uses various workarounds, emulations, or omits calls to
+them.
+
+Examples of things looked for are usleep, fdatasync, re-entrant time
+functions.
+
+To avoid polluting the parent directory with all the configure related
+files they are in this subdirectory.  The files have been copied
+unaltered from the SQLite amalgamation.

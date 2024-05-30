@@ -851,6 +851,21 @@ class mc_build_ext(apsw_build_ext):
             # Dsiable HW AES compilation
             ext.define_macros.append(("SQLITE3MC_OMIT_AES_HARDWARE_SUPPORT", "1"))
 
+        # configure was not run because we didn't download the
+        # amalgamation.  run it here.
+        proc = subprocess.run(["env", f"CC={shlex.join(self.compiler.compiler)}",
+                               "./configure"], text=True,
+                              capture_output=True, cwd="sqlite3/configure/")
+        breakpoint()
+        if proc.returncode == 0:
+            for line in open("sqlite3/configure/Makefile"):
+                if line.startswith("DEFS ="):
+                    for part in  shlex.split(line):
+                        if part.startswith("-DHAVE"):
+                            parts = part.split("=", 1)
+                            ext.define_macros.append((parts[0][2:], parts[1]))
+                    break
+
         return super().build_extension(ext)
 
 import tempfile
