@@ -51,10 +51,10 @@ class MultipleCiphers(unittest.TestCase):
 
     def testReadmeCheckKey(self):
         "readme check_key"
-        self.assertTrue(check_key(self.db, "hello world"))
-        self.assertFalse(check_key(self.db, "hello world2"))
+        self.assertTrue(apply_key(self.db, "hello world"))
+        self.assertFalse(apply_key(self.db, "hello world2"))
         # reset key back to correct value
-        self.assertTrue(check_key(self.db, "hello world"))
+        self.assertTrue(apply_key(self.db, "hello world"))
 
         # hold the database locked to check busy handling
         self.db.execute("begin exclusive")
@@ -66,9 +66,9 @@ class MultipleCiphers(unittest.TestCase):
         threading.Thread(target=busy).start()
 
         con2 = apsw.Connection(self.db.filename)
-        self.assertTrue(check_key(con2, "hello world"))
-        self.assertFalse(check_key(con2, "hello world2"))
-        self.assertTrue(check_key(con2, "hello world"))
+        self.assertTrue(apply_key(con2, "hello world"))
+        self.assertFalse(apply_key(con2, "hello world2"))
+        self.assertTrue(apply_key(con2, "hello world"))
 
     def tearDown(self):
         self.db.close()
@@ -76,8 +76,8 @@ class MultipleCiphers(unittest.TestCase):
 
 
 # This is from the README - they should be kept in sync
-def check_key(db, key) -> bool:
-    "Returns True if the key is correct."
+def apply_key(db, key) -> bool:
+    "Returns True if the key is correct, and applied"
 
     if db.pragma("key", key) != 'ok':
         raise apsw.CantOpenError("SQLite library does not implement encryption")

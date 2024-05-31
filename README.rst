@@ -118,8 +118,8 @@ provided are correct, use the following approach.
 
     import apsw
 
-    def check_key(db, key) -> bool:
-        "Returns True if the key is correct."
+    def apply_key(db, key) -> bool:
+        "Returns True if the key is applied and correct."
 
         if db.pragma("key", key) != 'ok':
             raise apsw.CantOpenError("SQLite library does not implement encryption")
@@ -147,7 +147,7 @@ provided are correct, use the following approach.
 
     con = apsw.Connection("database.sqlite3")
 
-    ok = check_key(con, "my secret key")
+    ok = apply_key(con, "my secret key")
 
 
 Verification
