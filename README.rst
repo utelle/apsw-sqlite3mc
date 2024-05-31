@@ -107,6 +107,8 @@ provided are correct, use the following approach.
 
 .. code-block:: python
 
+    import time
+
     import apsw
 
     def check_key(db, key) -> bool:
@@ -114,26 +116,30 @@ provided are correct, use the following approach.
 
         db.pragma("key", key)
 
-        try:
-            # try to set the user_version to the value it already has
-            # which has a side effect of populating an empty file,
-            # and checking the key provided above otherwise
-            db.pragma("user_version", con.pragma("user_version"))
+        while True:
+            try:
+                # try to set the user_version to the value it already has
+                # which has a side effect of populating an empty file,
+                # and checking the key provided above otherwise
+                with db:
+                  db.pragma("user_version", db.pragma("user_version"))
 
-        except apsw.BusyError:
-            # database already in transaction from a different connection
-            # or process, so assume all is ok
+            except apsw.BusyError:
+                # database already in transaction from a different connection
+                # or process, so sleep a little and try again
+                time.sleep(0.1)
+                continue
+
+            except apsw.NotADBError:
+                # The encryption key was wrong
+                return False
+
+            # all is good
             return True
-
-        except apsw.NotADBError:
-            # The encryption key was wrong
-            return False
-
-        return True
 
     con = apsw.Connection("database.sqlite3")
 
-    check_key(con, "my secret key")
+    ok = check_key(con, "my secret key")
 
 
 Verification
