@@ -109,7 +109,8 @@ Best practice
 SQLite has various quirks in how it operates.  For example database
 files are not populated until the first write.  SQLite3MultipleCiphers
 can't check keys are correct until the first access, and the database
-is populated.  In order to ensure files are populated and the keys
+is populated.  You shouldn't set or change keys while in a
+transaction.  In order to ensure files are populated and the keys
 provided are correct, use the following approach.
 
 .. code-block:: python
@@ -120,6 +121,9 @@ provided are correct, use the following approach.
 
     def apply_key(db, key) -> bool:
         "Returns True if the key is applied and correct."
+
+        if db.in_transaction:
+            raise apsw.SQLError("Won't set key while in a transaction")
 
         if db.pragma("key", key) != 'ok':
             raise apsw.CantOpenError("SQLite library does not implement encryption")

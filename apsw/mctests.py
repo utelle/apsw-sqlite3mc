@@ -70,6 +70,9 @@ class MultipleCiphers(unittest.TestCase):
         self.assertFalse(apply_key(con2, "hello world2"))
         self.assertTrue(apply_key(con2, "hello world"))
 
+        con2.execute("begin ; create table x(y)")
+        self.assertRaises(apsw.SQLError, apply_key, con2, "hello world")
+
     def tearDown(self):
         self.db.close()
         self.cleanup()
@@ -78,6 +81,9 @@ class MultipleCiphers(unittest.TestCase):
 # This is from the README - they should be kept in sync
 def apply_key(db, key) -> bool:
     "Returns True if the key is correct, and applied"
+
+    if db.in_transaction:
+        raise apsw.SQLError("Won't set key while in a transaction")
 
     if db.pragma("key", key) != 'ok':
         raise apsw.CantOpenError("SQLite library does not implement encryption")
