@@ -77,9 +77,10 @@ class MultipleCiphers(unittest.TestCase):
 
 # This is from the README - they should be kept in sync
 def check_key(db, key) -> bool:
-    "Return True if key is correct"
+    "Returns True if the key is correct."
 
-    db.pragma("key", key)
+    if db.pragma("key", key) != 'ok':
+        raise apsw.CantOpenError("SQLite library does not implement encryption")
 
     while True:
         try:

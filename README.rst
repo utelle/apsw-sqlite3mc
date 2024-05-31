@@ -71,6 +71,10 @@ Setting the key is the only change needed to your code.
   >>> con.pragma("key", "my secret passphrase")
   ok
 
+**Note**: The `ok` means the pragma was understood.  It does not mean
+the key is correct or has been applied to an empty database.  See the
+next section on best practice to check and apply the key.
+
 Alternately you can use `URI parameters
 <https://utelle.github.io/SQLite3MultipleCiphers/docs/configuration/config_uri/>`__.
 You need to correctly encode the filename and parameters, and tell
@@ -112,9 +116,10 @@ provided are correct, use the following approach.
     import apsw
 
     def check_key(db, key) -> bool:
-        "Return True if key is correct"
+        "Returns True if the key is correct."
 
-        db.pragma("key", key)
+        if db.pragma("key", key) != 'ok':
+            raise apsw.CantOpenError("SQLite library does not implement encryption")
 
         while True:
             try:
@@ -122,7 +127,7 @@ provided are correct, use the following approach.
                 # which has a side effect of populating an empty file,
                 # and checking the key provided above otherwise
                 with db:
-                  db.pragma("user_version", db.pragma("user_version"))
+                    db.pragma("user_version", db.pragma("user_version"))
 
             except apsw.BusyError:
                 # database already in transaction from a different connection
