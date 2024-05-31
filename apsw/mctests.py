@@ -2,6 +2,8 @@
 
 import gc
 import os
+import threading
+import time
 import unittest
 
 import apsw
@@ -36,7 +38,7 @@ class MultipleCiphers(unittest.TestCase):
     def testMcIssue156(self):
         "Check memory mapping"
         # https://github.com/utelle/SQLite3MultipleCiphers/issues/156
-        self.db.pragma("mmap_size", 2 ** 63)
+        self.db.pragma("mmap_size", 2**63)
         # we can just rerun key check
         self.testKey()
 
@@ -47,9 +49,58 @@ class MultipleCiphers(unittest.TestCase):
         # temp_store pragma doesn't return compile time value
         self.assertIn("TEMP_STORE=2", apsw.compile_options)
 
+    def testReadmeCheckKey(self):
+        "readme check_key"
+        self.assertTrue(check_key(self.db, "hello world"))
+        self.assertFalse(check_key(self.db, "hello world2"))
+        # reset key back to correct value
+        self.assertTrue(check_key(self.db, "hello world"))
+
+        # hold the database locked to check busy handling
+        self.db.execute("begin exclusive")
+
+        def busy():
+            time.sleep(1.1)
+            self.db.execute("end")
+
+        threading.Thread(target=busy).start()
+
+        con2 = apsw.Connection(self.db.filename)
+        self.assertTrue(check_key(con2, "hello world"))
+        self.assertFalse(check_key(con2, "hello world2"))
+        self.assertTrue(check_key(con2, "hello world"))
+
     def tearDown(self):
         self.db.close()
         self.cleanup()
+
+
+# This is from the README - they should be kept in sync
+def check_key(db, key) -> bool:
+    "Return True if key is correct"
+
+    db.pragma("key", key)
+
+    while True:
+        try:
+            # try to set the user_version to the value it already has
+            # which has a side effect of populating an empty file,
+            # and checking the key provided above otherwise
+            with db:
+                db.pragma("user_version", db.pragma("user_version"))
+
+        except apsw.BusyError:
+            # database already in transaction from a different connection
+            # or process, so sleep a little and try again
+            time.sleep(0.1)
+            continue
+
+        except apsw.NotADBError:
+            # The encryption key was wrong
+            return False
+
+        # all is good
+        return True
 
 
 if __name__ == "__main__":
