@@ -1,7 +1,7 @@
 |logoapsw| **+** |logos3mc|
 
 .. |logoapsw| image::  https://raw.githubusercontent.com/rogerbinns/apsw/master/doc/apswlogo.png
-  :width: 105 px
+  :width: 115 px
   :align: left
   :alt: APSW logo - links to documentation
   :target: https://rogerbinns.github.io/apsw/
