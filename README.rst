@@ -2,13 +2,11 @@
 
 .. |logoapsw| image::  https://raw.githubusercontent.com/rogerbinns/apsw/master/doc/apswlogo.png
   :width: 115 px
-  :align: left
   :alt: APSW logo - links to documentation
   :target: https://rogerbinns.github.io/apsw/
 
 .. |logos3mc| image::  https://utelle.github.io/SQLite3MultipleCiphers/assets/images/SQLite3MultipleCiphersLogo-420x230.png
   :width: 215 px
-  :align: right
   :alt: SQLite3 Multiple Ciphers packaged for Python
   :target: https://utelle.github.io/SQLite3MultipleCiphers/
 
