@@ -12,6 +12,8 @@
   :alt: SQLite3 Multiple Ciphers packaged for Python
   :target: https://utelle.github.io/SQLite3MultipleCiphers/
 
+.. contents:: Contents
+
 About
 -----
 
@@ -95,6 +97,49 @@ SQLite that you are using a URI name:
            | apsw.SQLITE_OPEN_CREATE
            | apsw.SQLITE_OPEN_READWRITE,
     )
+
+Best practice
+-------------
+
+SQLite has various quirks in how it operates.  For example database
+files are not populated until the first write.  SQLite3MultipleCiphers
+can't check keys are correct until the first access, and the database
+is populated.  In order to ensure files are populated and the keys
+provided are correct, use the following approach.
+
+.. code-block:: python
+
+    import apsw
+
+    def check_key(db, key) -> bool:
+        "Return True if key is correct"
+
+        db.pragma("key", key)
+
+        try:
+            # try to set the user_version to the value it already has
+            # which has a side effect of populating an empty file,
+            # and checking the key provided above otherwise
+            db.pragma("user_version", con.pragma("user_version"))
+
+        except apsw.BusyError:
+            # database already in transaction from a different connection
+            # or process, so assume all is ok
+            return True
+
+        except apsw.NotADBError:
+            # The encryption key was wrong
+            return False
+
+        return True
+
+    con = apsw.Connection("database.sqlite3")
+
+    check_key(con, "my secret key")
+
+
+Verification
+------------
 
 You can verify your database is encrypted with a hex viewer.  Regular database files
 start with `SQLite format 3` while encrypted database files are random.
