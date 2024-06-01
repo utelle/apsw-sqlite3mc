@@ -60,18 +60,25 @@ class MultipleCiphers(unittest.TestCase):
         self.db.execute("begin exclusive")
 
         def busy():
-            time.sleep(1.1)
+            time.sleep(0.5)
             self.db.execute("end")
 
         threading.Thread(target=busy).start()
 
         con2 = apsw.Connection(self.db.filename)
+        # should succeed after retrying due to lock
         self.assertTrue(apply_key(con2, "hello world"))
         self.assertFalse(apply_key(con2, "hello world2"))
         self.assertTrue(apply_key(con2, "hello world"))
 
+        # force timeout
+        self.db.execute("begin exclusive")
+        self.assertRaises(apsw.BusyError, apply_key, con2, "hello world")
+        self.db.execute("end")
+
+        # in a transaction
         con2.execute("begin ; create table x(y)")
-        self.assertRaises(apsw.SQLError, apply_key, con2, "hello world")
+        self.assertRaisesRegex(apsw.SQLError, ".*in a transaction", apply_key, con2, "hello world")
 
     def tearDown(self):
         self.db.close()
@@ -85,8 +92,10 @@ def apply_key(db, key) -> bool:
     if db.in_transaction:
         raise apsw.SQLError("Won't set key while in a transaction")
 
-    if db.pragma("key", key) != 'ok':
+    if db.pragma("key", key) != "ok":
         raise apsw.CantOpenError("SQLite library does not implement encryption")
+
+    retries = 10
 
     while True:
         try:
@@ -98,9 +107,14 @@ def apply_key(db, key) -> bool:
 
         except apsw.BusyError:
             # database already in transaction from a different connection
-            # or process, so sleep a little and try again
-            time.sleep(0.1)
-            continue
+            # or process,
+            retries = retries - 1
+            if retries > 0:
+                # sleep a little and try again
+                time.sleep(0.1)
+                continue
+            # give up - busy for too long
+            raise
 
         except apsw.NotADBError:
             # The encryption key was wrong

@@ -120,13 +120,15 @@ provided are correct, use the following approach.
     import apsw
 
     def apply_key(db, key) -> bool:
-        "Returns True if the key is applied and correct."
+        "Returns True if the key is correct, and applied"
 
         if db.in_transaction:
             raise apsw.SQLError("Won't set key while in a transaction")
 
-        if db.pragma("key", key) != 'ok':
+        if db.pragma("key", key) != "ok":
             raise apsw.CantOpenError("SQLite library does not implement encryption")
+
+        retries = 10
 
         while True:
             try:
@@ -138,9 +140,14 @@ provided are correct, use the following approach.
 
             except apsw.BusyError:
                 # database already in transaction from a different connection
-                # or process, so sleep a little and try again
-                time.sleep(0.1)
-                continue
+                # or process,
+                retries = retries - 1
+                if retries > 0:
+                    # sleep a little and try again
+                    time.sleep(0.1)
+                    continue
+                # give up - busy for too long
+                raise
 
             except apsw.NotADBError:
                 # The encryption key was wrong
