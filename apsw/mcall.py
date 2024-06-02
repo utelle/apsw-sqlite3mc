@@ -118,10 +118,14 @@ def run():
                     1 / 0
             d = {"cipher": cipher}
             d.update({name: val for name, val in good})
-            print(d)
+            newkey = random.randbytes(random.randrange(100)).hex()
+            if newkey:
+                print(d)
+            else:
+                print("No encryption")
             retry = False
             try:
-                con.pragma("hexrekey", random.randbytes(random.randrange(100)).hex())
+                con.pragma("hexrekey", newkey)
             except apsw.SQLError as exc:
                 for ok in ok_messages:
                     if ok in str(exc):
