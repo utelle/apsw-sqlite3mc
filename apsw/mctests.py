@@ -12,12 +12,15 @@ import apsw
 class MultipleCiphers(unittest.TestCase):
     def cleanup(self):
         "Get rid of all database files"
+        names = ["mcdb", "mcdb2"]
         for c in apsw.connections():
+            names.append(c.filename)
             c.close()
         gc.collect()
-        for suffix in "", "-wal", "-journal", "-shm":
-            if os.path.exists("mcdb" + suffix):
-                os.remove("mcdb" + suffix)
+        for name in names:
+            for suffix in "", "-wal", "-journal", "-shm":
+                if os.path.exists(name + suffix):
+                    os.remove(name + suffix)
 
     def setUp(self):
         self.cleanup()
@@ -48,6 +51,60 @@ class MultipleCiphers(unittest.TestCase):
         self.assertIn("SECURE_DELETE", apsw.compile_options)
         # temp_store pragma doesn't return compile time value
         self.assertIn("TEMP_STORE=2", apsw.compile_options)
+
+    def testBackup(self):
+        "Check backup restrictions"
+        # https://github.com/utelle/SQLite3MultipleCiphers/issues/158
+        apply_encryption(self.db, key="hello world", cipher="rc4")
+        self.db.execute("create table x(y); insert into x values(randomblob(65536))")
+
+        # to and from memory should not work
+        tmp = apsw.Connection("")
+        tmp.execute("create table x(y); insert into x values(randomblob(65536))")
+
+        self.assertRaisesRegex(
+            apsw.SQLError, ".*incompatible source and target database.*", self.db.backup, "main", tmp, "main"
+        )
+        self.assertRaisesRegex(
+            apsw.SQLError, ".*incompatible source and target database.*", tmp.backup, "main", self.db, "main"
+        )
+
+        # removing encryption should work
+        apply_encryption(self.db, rekey="")
+        with self.db.backup("main", tmp, "main") as b:
+            b.step()
+        self.db.execute("vacuum")
+
+        # and not when put back
+        apply_encryption(self.db, rekey="world hello", cipher="rc4")
+        self.assertRaisesRegex(
+            apsw.SQLError, ".*incompatible source and target database.*", tmp.backup, "main", self.db, "main"
+        )
+
+        # different cipher, different keys
+        db2 = apsw.Connection(self.db.filename + "2")
+        apply_encryption(db2, key="world hello2")
+
+        # put more gunk in both
+        self.db.execute("create table if not exists x(y); insert into x values(randomblob(65536))")
+        db2.execute("create table if not exists x(y); insert into x values(randomblob(65536))")
+
+        self.assertNotEqual(self.db.pragma("cipher"), db2.pragma("cipher"))
+        with db2.backup("main", self.db, "main") as b:
+            b.step()
+        self.assertEqual(self.db.execute("select y from x").get, db2.execute("select y from x").get)
+
+        # page size
+        db2.close()
+        os.remove(self.db.filename + "2")
+        db2 = apsw.Connection(self.db.filename + "2")
+        apply_encryption(db2, key="hjkhkjhk", cipher="aes128cbc", legacy=1, legacy_page_size=16384)
+        db2.execute("create table if not exists x(y); insert into x values(randomblob(65536))")
+
+        with db2.backup("main", self.db, "main") as b:
+            b.step()
+        self.assertEqual(self.db.execute("select y from x").get, db2.execute("select y from x").get)
+        db2.execute("vacuum")
 
     def testReadmeApplyEncryption(self):
         "readme apply_encryption"
