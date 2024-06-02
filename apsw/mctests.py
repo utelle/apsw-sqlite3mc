@@ -49,15 +49,18 @@ class MultipleCiphers(unittest.TestCase):
         # temp_store pragma doesn't return compile time value
         self.assertIn("TEMP_STORE=2", apsw.compile_options)
 
-    def testReadmeCheckKey(self):
-        "readme check_key"
-        self.assertTrue(apply_key(self.db, "hello world"))
-        self.assertFalse(apply_key(self.db, "hello world2"))
+    def testReadmeApplyEncryption(self):
+        "readme apply_encryption"
+        # should work
+        apply_encryption(self.db, key="hello world")
+        # should fail because key is wrong
+        self.assertRaises(apsw.NotADBError, apply_encryption, self.db, hexkey="1122")
         # reset key back to correct value
-        self.assertTrue(apply_key(self.db, "hello world"))
+        apply_encryption(self.db, key="hello world")
 
         # hold the database locked to check busy handling
         self.db.execute("begin exclusive")
+        con2 = apsw.Connection(self.db.filename)
 
         def busy():
             time.sleep(0.5)
@@ -65,20 +68,126 @@ class MultipleCiphers(unittest.TestCase):
 
         threading.Thread(target=busy).start()
 
-        con2 = apsw.Connection(self.db.filename)
-        # should succeed after retrying due to lock
-        self.assertTrue(apply_key(con2, "hello world"))
-        self.assertFalse(apply_key(con2, "hello world2"))
-        self.assertTrue(apply_key(con2, "hello world"))
-
-        # force timeout
-        self.db.execute("begin exclusive")
-        self.assertRaises(apsw.BusyError, apply_key, con2, "hello world")
-        self.db.execute("end")
+        self.assertRaises(apsw.BusyError, apply_encryption, con2, key="hello world")
+        con2.set_busy_timeout(1000)
+        apply_encryption(con2, key="hello world")
 
         # in a transaction
         con2.execute("begin ; create table x(y)")
-        self.assertRaisesRegex(apsw.SQLError, ".*in a transaction", apply_key, con2, "hello world")
+        self.assertRaisesRegex(Exception, ".*in a transaction", apply_encryption, con2, key="hello world")
+        con2.close()
+
+        def reset():
+            self.tearDown()
+            self.setUp()
+
+        # These should all work
+        for config in (
+            # https://github.com/utelle/SQLite3MultipleCiphers/issues/160
+            # {"plaintext_header_size": 64, "cipher": "sqlcipher", "key": "one"},
+            {
+                "hexkey": "aabbccddee",
+                "legacy": 1,
+                "legacy_page_size": 9876,
+                "cipher": "aes128cbc",
+            },
+            {
+                "hexkey": "aabbccddee",
+                "legacy": 1,
+                "legacy_page_size": 9876,
+                "kdf_iter": 99,
+                "cipher": "aes256cbc",
+            },
+            {
+                "key": "hello world",
+                "cipher": "chacha20",
+            },
+            {
+                "cipher": "rc4",
+                # only supports 1
+                "legacy": 1,
+                "hexkey": "99",
+            },
+            {
+                "cipher": "ascon128",
+                "hexkey": "77",
+            },
+            # some random ones
+            {"kdf_iter": 73, "key": "two"},
+            {
+                "legacy_page_size": 65536,
+                "legacy": 1,
+                "hexkey": "112233",
+            },
+        ):
+            reset()
+            apply_encryption(self.db, **config)
+            self.db.execute("create table x(y); insert into x values(randomblob(32768))")
+            # check via another connection
+            con2 = apsw.Connection(self.db.filename)
+            apply_encryption(con2, **config)
+            self.assertEqual(32768, con2.execute("select length(y) from x").get)
+            # check for ourselves that the parameters took
+            for k, v in config.items():
+                if k.lower() in {"key", "hexkey", "rekey", "hexrekey"}:
+                    continue
+                # https://github.com/utelle/SQLite3MultipleCiphers/issues/161
+                self.assertEqual(str(v), con2.pragma(k))
+
+        # Exceptions
+        reset()
+        self.assertRaisesRegex(
+            apsw.SQLError, ".*Cipher 'hello world' unknown..*", apply_encryption, self.db, cipher="hello world", key=3
+        )
+        self.assertRaisesRegex(apsw.SQLError, ".*Malformed hex string.*", apply_encryption, self.db, hexkey="not hex")
+
+        # Erroneous configs
+        for text, config in (
+            ("Exactly one key", {}),
+            ("Exactly one key", {"key": "123", "hexkey": "123"}),
+            ("Exactly one key", {"key": "123", "KeY": "123"}),
+            (
+                "Failed to configure pragma='legacy'",
+                {
+                    "hexkey": "aabbccddee",
+                    "legacy_page_size": 32768,
+                    "legacy": 7,
+                    "cipher": "aes128cbc",
+                },
+            ),
+            (
+                "Failed to configure pragma='kdf_iter'",
+                {
+                    "hexkey": "aabbccddee",
+                    "legacy": 1,
+                    "kdf_iter": -7,
+                    "cipher": "aes256cbc",
+                },
+            ),
+            (
+                "Failed to configure pragma='legacy'",
+                {
+                    "cipher": "rc4",
+                    "legacy": 0,
+                    # not valid hex - verifies legacy is applied first
+                    "hexkey": "secret",
+                },
+            ),
+        ):
+            reset()
+            self.assertRaisesRegex(ValueError, f".*{text}.*", apply_encryption, self.db, **config)
+
+        # rekeying
+        reset()
+        apply_encryption(self.db, key="hello")
+        self.db.execute("create table x(y); insert into x values(randomblob(32768))")
+
+        con2 = apsw.Connection(self.db.filename)
+        # encrypted
+        self.assertRaises(apsw.NotADBError, con2.execute, "select length(y) from x")
+        apply_encryption(self.db, hexrekey="")
+        # not encrypted
+        self.assertEqual(32768, con2.execute("select length(y) from x").get)
 
     def tearDown(self):
         self.db.close()
@@ -86,42 +195,56 @@ class MultipleCiphers(unittest.TestCase):
 
 
 # This is from the README - they should be kept in sync
-def apply_key(db, key) -> bool:
-    "Returns True if the key is correct, and applied"
+def apply_encryption(db, **kwargs):
+    """Call with keyword arguments for key or heykey, and optional cipher configuration"""
 
     if db.in_transaction:
-        raise apsw.SQLError("Won't set key while in a transaction")
+        raise Exception("Won't update encryption while in a transaction")
 
-    if db.pragma("key", key) != "ok":
-        raise apsw.CantOpenError("SQLite library does not implement encryption")
+    # the order of pragmas matters
+    def pragma_order(item):
+        # pragmas are case insensitive
+        pragma = item[0].lower()
+        # cipher must be first
+        if pragma == "cipher":
+            return 1
+        # old default settings reset configuration next
+        if pragma == "legacy":
+            return 2
+        # then anything with legacy in the name
+        if "legacy" in pragma:
+            return 3
+        # all except keys
+        if pragma not in {"key", "hexkey", "rekey", "hexrekey"}:
+            return 3
+        # keys are last
+        return 100
 
-    retries = 10
+    # check only ome key present
+    if 1 != sum(1 if pragma_order(item) == 100 else 0 for item in kwargs.items()):
+        raise ValueError("Exactly one key must be provided")
 
-    while True:
-        try:
-            # try to set the user_version to the value it already has
-            # which has a side effect of populating an empty file,
-            # and checking the key provided above otherwise
-            with db:
-                db.pragma("user_version", db.pragma("user_version"))
+    for pragma, value in sorted(kwargs.items(), key=pragma_order):
+        # if the pragma was understood and in range we get the value
+        # back, while key related ones return 'ok'
+        expected = "ok" if pragma_order((pragma, value)) == 100 else str(value)
+        if db.pragma(pragma, value) != expected:
+            raise ValueError(f"Failed to configure {pragma=}")
 
-        except apsw.BusyError:
-            # database already in transaction from a different connection
-            # or process,
-            retries = retries - 1
-            if retries > 0:
-                # sleep a little and try again
-                time.sleep(0.1)
-                continue
-            # give up - busy for too long
-            raise
+    # Try to read from the database.  If the database is encrypted and
+    # the cipher/key information is wrong you will get NotADBError
+    # because the file looks like random noise
+    db.pragma("user_version")
 
-        except apsw.NotADBError:
-            # The encryption key was wrong
-            return False
-
-        # all is good
-        return True
+    try:
+        # try to set the user_version to the value it already has
+        # which has a side effect of populating an empty database
+        with db:
+            # done inside a transaction to avoid race conditions
+            db.pragma("user_version", db.pragma("user_version"))
+    except apsw.ReadOnlyError:
+        # can't make changes - that is ok
+        pass
 
 
 if __name__ == "__main__":
