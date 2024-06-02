@@ -189,6 +189,11 @@ class MultipleCiphers(unittest.TestCase):
         # not encrypted
         self.assertEqual(32768, con2.execute("select length(y) from x").get)
 
+        # readme example
+        reset()
+        apply_encryption(self.db, key="my secrey key")
+        apply_encryption(self.db, rekey="new key", cipher="ascon128", kdf_iter=1000)
+
     def tearDown(self):
         self.db.close()
         self.cleanup()

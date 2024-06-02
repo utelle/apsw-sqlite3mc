@@ -110,8 +110,8 @@ SQLite has various quirks in how it operates.  For example database
 files are not populated until the first write.  SQLite3MultipleCiphers
 can't check keys are correct until the first access, and the database
 is populated.  You shouldn't set or change keys while in a
-transaction.  In order to ensure files are populated and the keys
-provided are correct, use the following approach.
+transaction.  In order to ensure files are populated, and the keys and
+cipher configuration provided are correct, use the following method.
 
 .. code-block:: python
 
@@ -119,46 +119,65 @@ provided are correct, use the following approach.
 
     import apsw
 
-    def apply_key(db, key) -> bool:
-        "Returns True if the key is correct, and applied"
+    def apply_encryption(db, **kwargs):
+        """Call with keyword arguments for key or heykey, and optional cipher configuration"""
 
         if db.in_transaction:
-            raise apsw.SQLError("Won't set key while in a transaction")
+            raise Exception("Won't update encryption while in a transaction")
 
-        if db.pragma("key", key) != "ok":
-            raise apsw.CantOpenError("SQLite library does not implement encryption")
+        # the order of pragmas matters
+        def pragma_order(item):
+            # pragmas are case insensitive
+            pragma = item[0].lower()
+            # cipher must be first
+            if pragma == "cipher":
+                return 1
+            # old default settings reset configuration next
+            if pragma == "legacy":
+                return 2
+            # then anything with legacy in the name
+            if "legacy" in pragma:
+                return 3
+            # all except keys
+            if pragma not in {"key", "hexkey", "rekey", "hexrekey"}:
+                return 3
+            # keys are last
+            return 100
 
-        retries = 10
+        # check only ome key present
+        if 1 != sum(1 if pragma_order(item) == 100 else 0 for item in kwargs.items()):
+            raise ValueError("Exactly one key must be provided")
 
-        while True:
-            try:
-                # try to set the user_version to the value it already has
-                # which has a side effect of populating an empty file,
-                # and checking the key provided above otherwise
-                with db:
-                    db.pragma("user_version", db.pragma("user_version"))
+        for pragma, value in sorted(kwargs.items(), key=pragma_order):
+            # if the pragma was understood and in range we get the value
+            # back, while key related ones return 'ok'
+            expected = "ok" if pragma_order((pragma, value)) == 100 else str(value)
+            if db.pragma(pragma, value) != expected:
+                raise ValueError(f"Failed to configure {pragma=}")
 
-            except apsw.BusyError:
-                # database already in transaction from a different connection
-                # or process,
-                retries = retries - 1
-                if retries > 0:
-                    # sleep a little and try again
-                    time.sleep(0.1)
-                    continue
-                # give up - busy for too long
-                raise
+        # Try to read from the database.  If the database is encrypted and
+        # the cipher/key information is wrong you will get NotADBError
+        # because the file looks like random noise
+        db.pragma("user_version")
 
-            except apsw.NotADBError:
-                # The encryption key was wrong
-                return False
+        try:
+            # try to set the user_version to the value it already has
+            # which has a side effect of populating an empty database
+            with db:
+                # done inside a transaction to avoid race conditions
+                db.pragma("user_version", db.pragma("user_version"))
+        except apsw.ReadOnlyError:
+            # can't make changes - that is ok
+            pass
 
-            # all is good
-            return True
 
     con = apsw.Connection("database.sqlite3")
 
-    ok = apply_key(con, "my secret key")
+    apply_encryption(con, key="my secret key")
+
+    # you can also do more sophisticated operations.  Here we change the cipher,
+    # kdf rounds, and the key
+    apply_encryption(con, rekey="new key", cipher="ascon128", kdf_iter=1000)
 
 
 Verification
