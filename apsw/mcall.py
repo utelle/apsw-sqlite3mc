@@ -50,6 +50,8 @@ ciphers = {
     },
 }
 
+# sqlcipher unusable due to https://github.com/utelle/SQLite3MultipleCiphers/issues/160
+del ciphers["sqlcipher"]
 
 all_params: set[str] = set()
 for v in ciphers.values():
@@ -99,41 +101,46 @@ ok_messages = ("Pagesize cannot be changed for an encrypted database.",)
 
 
 def run():
-    con = apsw.Connection("mcall")
-    con.execute("create table x(y); insert into x values(randomblob(65536))")
+    while True:
+        cleanup()
+        con = apsw.Connection("mcall")
+        con.execute("create table x(y); insert into x values(randomblob(65536))")
 
-    for cipher, good, bad in permutations():
-        con.pragma("cipher", cipher)
-        for name, val in bad:
-            if con.pragma(name, val) == str(val):
-                breakpoint()
-                1 / 0
-        for name, val in good:
-            if con.pragma(name, val) != str(val):
-                breakpoint()
-                1 / 0
-        d = {"cipher": cipher}
-        d.update({name: val for name, val in good})
-        print(d)
-        retry = False
-        try:
-            con.pragma("hexrekey", random.randbytes(random.randrange(100)).hex())
-        except apsw.SQLError as exc:
-            for ok in ok_messages:
-                if ok in str(exc):
-                    retry = True
-                    print(str(exc))
-                    break
-            else:
-                raise
+        for cipher, good, bad in permutations():
+            con.pragma("cipher", cipher)
+            for name, val in bad:
+                if con.pragma(name, val) == str(val):
+                    breakpoint()
+                    1 / 0
+            for name, val in good:
+                if con.pragma(name, val) != str(val):
+                    breakpoint()
+                    1 / 0
+            d = {"cipher": cipher}
+            d.update({name: val for name, val in good})
+            print(d)
+            retry = False
+            try:
+                con.pragma("hexrekey", random.randbytes(random.randrange(100)).hex())
+            except apsw.SQLError as exc:
+                for ok in ok_messages:
+                    if ok in str(exc):
+                        retry = True
+                        print(str(exc))
+                        break
+                else:
+                    raise
 
-        if retry:
-            continue
+            if retry:
+                continue
 
-        con.execute("insert into x values(randomblob(?))", (random.randrange(0, 100000),))
-        con.execute("delete from x where y in (select min(y) from x)")
+            try:
+                con.execute("insert into x values(randomblob(?))", (random.randrange(0, 100000),))
+                con.execute("delete from x where y in (select min(y) from x)")
+            except Exception as exc:
+                print(f"******  Unexpected exception {exc} - starting again)")
+                break
 
 
 random.seed(0)
-cleanup()
 run()
