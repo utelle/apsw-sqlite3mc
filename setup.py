@@ -871,6 +871,11 @@ class mc_build_ext(apsw_build_ext):
         ext.define_macros.append(("SQLITE_TEMP_STORE", "2"))
         ext.define_macros.append(("SQLITE_SECURE_DELETE", "1"))
 
+        # there are too many dragons in the fork checking, and Python
+        # is using exec rather than fork these days.  We don't call
+        # the sqlite3mc_shutdown either.
+        ext.undef_macros.append("APSW_FORK_CHECKER")
+
         return super().build_extension(ext)
 
 import tempfile
