@@ -50,9 +50,6 @@ ciphers = {
     },
 }
 
-# sqlcipher unusable due to https://github.com/utelle/SQLite3MultipleCiphers/issues/160
-del ciphers["sqlcipher"]
-
 all_params: set[str] = set()
 for v in ciphers.values():
     all_params.update(v.keys())
@@ -134,6 +131,9 @@ def run():
                         break
                 else:
                     raise
+            except apsw.CorruptError:
+                print("rekey reports CorruptError - starting again")
+                retry = True
 
             if retry:
                 continue
@@ -141,8 +141,9 @@ def run():
             try:
                 con.execute("insert into x values(randomblob(?))", (random.randrange(0, 100000),))
                 con.execute("delete from x where y in (select min(y) from x)")
+                con.execute("vacuum")
             except Exception as exc:
-                print(f"******  Unexpected exception {exc} - starting again)")
+                print(f"****** Running SQL after rekey -  Unexpected exception {exc} - starting again)")
                 break
 
 
