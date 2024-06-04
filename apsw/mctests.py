@@ -101,10 +101,9 @@ class MultipleCiphers(unittest.TestCase):
         apply_encryption(db2, key="hjkhkjhk", cipher="aes128cbc", legacy=1, legacy_page_size=16384)
         db2.execute("create table if not exists x(y); insert into x values(randomblob(65536))")
 
-        with db2.backup("main", self.db, "main") as b:
-            b.step()
-        self.assertEqual(self.db.execute("select y from x").get, db2.execute("select y from x").get)
-        db2.execute("vacuum")
+        self.assertRaisesRegex(
+            apsw.SQLError, ".*incompatible source and target databases.*", db2.backup, "main", self.db, "main"
+        )
 
     def testReadmeApplyEncryption(self):
         "readme apply_encryption"
@@ -145,13 +144,13 @@ class MultipleCiphers(unittest.TestCase):
             {
                 "hexkey": "aabbccddee",
                 "legacy": 1,
-                "legacy_page_size": 9876,
+                "legacy_page_size": 8192,
                 "cipher": "aes128cbc",
             },
             {
                 "hexkey": "aabbccddee",
                 "legacy": 1,
-                "legacy_page_size": 9876,
+                "legacy_page_size": 16384,
                 "kdf_iter": 99,
                 "cipher": "aes256cbc",
             },
@@ -203,6 +202,14 @@ class MultipleCiphers(unittest.TestCase):
             ("Exactly one key", {}),
             ("Exactly one key", {"key": "123", "hexkey": "123"}),
             ("Exactly one key", {"key": "123", "KeY": "123"}),
+            (
+                "Failed to configure pragma='legacy_page_size'",
+                {
+                    "Hexrekey": "kljkljkl",
+                    "cipher": "rc4",
+                    "legacy_page_size": 7654,
+                },
+            ),
             (
                 "Failed to configure pragma='legacy'",
                 {
