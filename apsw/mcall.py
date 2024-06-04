@@ -17,17 +17,17 @@ import apsw
 ciphers = {
     "aes128cbc": {
         "legacy": {0, 1},
-        "legacy_page_size": (0, 65536),
+        "legacy_page_size": {2**i for i in range(9, 17)},
     },
     "aes256cbc": {
         "kdf_iter": (1, 10000),
         "legacy": {0, 1},
-        "legacy_page_size": (0, 65536),
+        "legacy_page_size": {2**i for i in range(9, 17)},
     },
     "chacha20": {
         "kdf_iter": (1, 10000),
         "legacy": {0, 1},
-        "legacy_page_size": (0, 65536),
+        "legacy_page_size": {2**i for i in range(9, 17)},
     },
     "sqlcipher": {
         "kdf_iter": (1, 10000),
@@ -36,14 +36,14 @@ ciphers = {
         "hmac_pgno": {0, 1, 2},
         "hmac_salt_mask": (0, 256),
         "legacy": (0, 4),
-        "legacy_page_size": (0, 65536),
+        "legacy_page_size": {2**i for i in range(9, 17)},
         "kdf_algorithm": (0, 2),
         "hmac_algorithm": (0, 2),
         "plaintext_header_size": (0, 100),
     },
     "rc4": {
         "legacy": {1},
-        "legacy_page_size": (0, 65536),
+        "legacy_page_size": {2**i for i in range(9, 17)},
     },
     "ascon128": {
         "kdf_iter": (1, 10000),
@@ -131,6 +131,9 @@ def run():
                         break
                 else:
                     raise
+            except apsw.NotADBError:
+                print("rekey reports NotADbError - starting again")
+                retry = True
             except apsw.CorruptError:
                 print("rekey reports CorruptError - starting again")
                 retry = True
