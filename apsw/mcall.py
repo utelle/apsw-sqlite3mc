@@ -39,7 +39,7 @@ ciphers = {
         "legacy_page_size": {2**i for i in range(9, 17)},
         "kdf_algorithm": (0, 2),
         "hmac_algorithm": (0, 2),
-        "plaintext_header_size": (0, 100),
+        "plaintext_header_size": {0, 16, 32, 48, 64, 80, 96},
     },
     "rc4": {
         "legacy": {1},
