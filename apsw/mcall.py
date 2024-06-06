@@ -82,13 +82,13 @@ def permutations() -> Generator[tuple[str, tuple[str, int], tuple[str, int]], No
         good_params = []
         bad_params = []
         for _ in range(random.randrange(4)):
-            param = random.choice(all_params)
+            param = random.choice(sorted(all_params))
             if param not in ciphers[cipher]:
                 bad_params.append((param, 0))
             else:
                 valid = ciphers[cipher][param]
                 if isinstance(valid, set):
-                    good_params.append((param, random.choice(tuple(valid))))
+                    good_params.append((param, random.choice(sorted(valid))))
                 else:
                     good_params.append((param, random.randint(*valid)))
         yield cipher, tuple(good_params), tuple(bad_params)
