@@ -78,6 +78,10 @@ Setting the key is the only change needed to your code.
 the key is correct or has been applied to an empty database.  See the
 next section on best practice to check and apply the key.
 
+**Note**: `key` only sets the key for following reads and writes.  If
+the database already has content, and you want to encrypt it then use
+`rekey` which will modify the database to apply the supplied key.
+
 Alternately you can use `URI parameters
 <https://utelle.github.io/SQLite3MultipleCiphers/docs/configuration/config_uri/>`__.
 You need to correctly encode the filename and parameters, and tell
