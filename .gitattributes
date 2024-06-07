@@ -1,0 +1,17 @@
+# Set default behaviour to automatically normalize line endings.
+* text=auto
+
+# Source files
+*.c text
+*.h text
+*.in text
+*.rc text
+*.py text
+*.pyi text
+
+*.rst text
+
+# Resource files
+*.db binary
+*.ico binary
+*.png binary
