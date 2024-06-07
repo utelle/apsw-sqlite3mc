@@ -74,13 +74,13 @@ Setting the key is the only change needed to your code.
   >>> con.pragma("key", "my secret passphrase")
   ok
 
-**Note**: The `ok` means the pragma was understood.  It does not mean
+**Note**: The ``ok`` means the pragma was understood.  It does not mean
 the key is correct or has been applied to an empty database.  See the
 next section on best practice to check and apply the key.
 
-**Note**: `key` only sets the key for following reads and writes.  If
+**Note**: ``key`` only sets the key for following reads and writes.  If
 the database already has content, and you want to encrypt it then use
-`rekey` which will modify the database to apply the supplied key.
+``rekey`` which will modify the database to apply the supplied key.
 
 Alternately you can use `URI parameters
 <https://utelle.github.io/SQLite3MultipleCiphers/docs/configuration/config_uri/>`__.
