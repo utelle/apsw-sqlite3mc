@@ -115,11 +115,11 @@ def run():
                     1 / 0
             d = {"cipher": cipher}
             d.update({name: val for name, val in good})
-            newkey = random.randbytes(random.randrange(100)).hex()
+            newkey = random.randbytes(random.randrange(10)).hex()
             if newkey:
                 print(d)
             else:
-                print("No encryption")
+                print("Remove encryption")
             retry = False
             try:
                 con.pragma("hexrekey", newkey)
