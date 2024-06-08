@@ -139,8 +139,11 @@ class MultipleCiphers(unittest.TestCase):
 
         # These should all work
         for config in (
-            # https://github.com/utelle/SQLite3MultipleCiphers/issues/160
-            # {"plaintext_header_size": 64, "cipher": "sqlcipher", "key": "one"},
+            {
+                "plaintext_header_size": 64,
+                "cipher": "sqlcipher",
+                "key": "one",
+            },
             {
                 "hexkey": "aabbccddee",
                 "legacy": 1,
