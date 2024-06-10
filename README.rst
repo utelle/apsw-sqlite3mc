@@ -53,7 +53,7 @@ to set a passphrase based key, or a binary bytes based key::
   connection.pragma("key", "my secret passphrase")
   connection.pragma("hexkey", b"\xfe\x23\x9e\x77".hex())
 
-Setting the key is the only change needed to your code.
+Setting the key on a new database is the only change needed to your code.
 
 .. code-block:: pycon
 
@@ -105,16 +105,15 @@ files are not populated until the first write.  SQLite3MultipleCiphers
 can't check keys are correct until the first access, and the database
 is populated.  You shouldn't set or change keys while in a
 transaction.  In order to ensure files are populated, and the keys and
-cipher configuration provided are correct, use the following method.
+cipher configuration provided are correct, use the following method with
+example usage shown at the end.
 
 .. code-block:: python
-
-    import time
 
     import apsw
 
     def apply_encryption(db, **kwargs):
-        """Call with keyword arguments for key or heykey, and optional cipher configuration"""
+        """You must include an argument for keying, and optional cipher configurations"""
 
         if db.in_transaction:
             raise Exception("Won't update encryption while in a transaction")
