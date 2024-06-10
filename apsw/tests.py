@@ -5041,12 +5041,36 @@ class APSW(unittest.TestCase):
         con = apsw.Connection(self.db.filename, vfs=tvfs.vfsname)
         # put enough stuff in temp table that it spills to disk
         con.pragma("cache_size", 10)
-        con.execute("create temp table testissue506(x UNIQUE,y UNIQUE, PRIMARY KEY(x,y))")
-        con.executemany("insert into testissue506 values(?,?)", (("a"*i, "b"*i) for i in range(1000)))
+        temp_store = con.pragma("temp_store")
+        try:
+            con.pragma("temp_store", 1)
+            con.execute("create temp table testissue506(x UNIQUE,y UNIQUE, PRIMARY KEY(x,y))")
+            con.executemany("insert into testissue506 values(?,?)", (("a"*i, "b"*i) for i in range(1000)))
+        finally:
+            con.pragma("temp_store", temp_store)
 
         # verify we saw the Nones
         self.assertTrue(vfs_saw_none)
         self.assertTrue(vfsfile_saw_none)
+
+    def testIssue526(self):
+        "Error in VFS xRandomness"
+        class RandomVFS(apsw.VFS):
+            def __init__(self):
+                apsw.VFS.__init__(self, "issue526", "", 1)
+
+        vfs = RandomVFS()
+
+        self.db.pragma("journal_mode", "WAL")
+        try:
+            with self.db:
+                RandomVFS.xRandomness = lambda *args: 1/0
+                # this resets SQLite randomness so xRandonness of default VFS will be called again
+                apsw.randomness(0)
+                self.db.pragma("user_version", 1)
+            raise Exception("Should not reach here")
+        except ZeroDivisionError:
+            pass
 
     def testCursorGet(self):
         "Cursor.get"
