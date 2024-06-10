@@ -1,16 +1,6 @@
-.. role:: raw-html(raw)
-   :format: html
-
-|logoapsw| **+** |logos3mc|
-
-.. |logoapsw| image::  https://raw.githubusercontent.com/rogerbinns/apsw/master/doc/apswlogo.png
-  :width: 115 px
-  :alt: APSW logo - links to documentation
-  :target: https://rogerbinns.github.io/apsw/
-
-.. |logos3mc| image::  https://utelle.github.io/SQLite3MultipleCiphers/assets/images/SQLite3MultipleCiphersLogo-420x230.png
+.. image::  https://raw.githubusercontent.com/utelle/apsw-sqlite3mc/sqlite3mc/apsw-sqlite3mc-logo.jpg
   :width: 215 px
-  :alt: SQLite3 Multiple Ciphers packaged for Python
+  :alt: APSW SQLite Multiple Cipher logo - links to documentation
   :target: https://utelle.github.io/SQLite3MultipleCiphers/
 
 .. contents:: Contents
