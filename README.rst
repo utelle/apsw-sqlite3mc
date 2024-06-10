@@ -1,7 +1,7 @@
 .. role:: raw-html(raw)
    :format: html
 
-|logoapsw| :raw-html:`<span style="font-size: xxx-large; font-weight:bold">+</span>` |logos3mc|
+|logoapsw| **+** |logos3mc|
 
 .. |logoapsw| image::  https://raw.githubusercontent.com/rogerbinns/apsw/master/doc/apswlogo.png
   :width: 115 px
