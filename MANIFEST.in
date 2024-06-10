@@ -24,3 +24,12 @@ include setup.py
 include README.rst
 
 include setup.apsw
+
+# configure
+include sqlite3/configure/*
+# remove generated detritus
+exclude sqlite3/configure/config.log
+exclude sqlite3/configure/config.status
+exclude sqlite3/configure/libtool
+exclude sqlite3/configure/Makefile
+exclude sqlite3/configure/sqlite3.pc
