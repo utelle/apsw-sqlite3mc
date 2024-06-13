@@ -204,3 +204,19 @@ start with `SQLite format 3` while encrypted database files are random.
   00000070  0e 70 0d f7 0d 8c 08 c9  0c 67 0b 2f 09 71 08 db  |.p.......g./.q..|
   00000080  08 db 08 db 03 ae 03 55  03 55 03 55 03 55 03 55  |.......U.U.U.U.U|
   00000090  03 55 03 55 03 55 03 55  03 55 03 55 03 55 03 55  |.U.U.U.U.U.U.U.U|
+
+Support/Discussions
+-------------------
+
+For SQLite questions, support, and issues, use the [SQLite
+Forum](https://sqlite.org/forum/forum).
+
+For APSW questions, support, and issues, see [your
+choices](https://rogerbinns.github.io/apsw/about.html#mailing-lists-contacts).
+
+For SQLite3MultipleCiphers questions, support, and issues see [the
+project page](https://github.com/utelle/SQLite3MultipleCiphers).
+
+For APSW together with SQLite3MultipleCiphers questions, support, and
+issues see [the project
+page](https://github.com/utelle/apsw-sqlite3mc).
