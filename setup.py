@@ -67,6 +67,7 @@ project_urls = {
     "Documentation (APSW)": "https://rogerbinns.github.io/apsw/",
     "Documentation (SQLite3MultipleCiphers)": "https://utelle.github.io/SQLite3MultipleCiphers/",
     "Documentation (SQLite)": "https://sqlite.org/lang.html",
+    "Support/Discussions": "https://github.com/utelle/apsw-sqlite3mc?tab=readme-ov-file#supportdiscussions",
     "Issue Tracker": "https://github.com/utelle/apsw-sqlite3mc/issues",
     "Code": "https://github.com/utelle/apsw-sqlite3mc",
 }
