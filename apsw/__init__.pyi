@@ -1249,6 +1249,9 @@ class Connection:
         returns when the first row is available or all statements have
         completed.  (A cursor is automatically obtained).
 
+        For pragmas you should use :meth:`pragma` which handles quoting and
+        caching correctly.
+
         See :meth:`Cursor.execute` for more details, and the :ref:`example <example_executing_sql>`."""
         ...
 
@@ -1462,7 +1465,7 @@ class Connection:
 
     overloadfunction = overload_function ## OLD-NAME
 
-    def pragma(self, name: str, value: Optional[SQLiteValue] = None) -> Any:
+    def pragma(self, name: str, value: Optional[SQLiteValue] = None, *, schema: Optional[str] = None) -> Any:
         """Issues the pragma (with the value if supplied) and returns the result with
         :attr:`the least amount of structure <Cursor.get>`.  For example
         :code:`pragma("user_version")` will return just the number, while
@@ -1470,7 +1473,13 @@ class Connection:
         now in effect.
 
         Pragmas do not support bindings, so this method is a convenient
-        alternative to composing SQL text.
+        alternative to composing SQL text.  Pragmas are often executed
+        while being prepared, instead of when run like regular SQL.  They
+        may also contain encryption keys.  This method ensures they are
+        not cached to avoid problems.
+
+        Use the `schema` parameter to run the pragma against a different
+        attached database (eg ``temp``).
 
         * :ref:`Example <example_pragma>`"""
         ...
@@ -1812,6 +1821,20 @@ class Connection:
         if provided.  :attr:`apsw.mapping_txn_state` contains the values returned.
 
         Calls: `sqlite3_txn_state <https://sqlite.org/c3ref/txn_state.html>`__"""
+        ...
+
+    def vfsname(self, dbname: str) -> str | None:
+        """Issues the `SQLITE_FCNTL_VFSNAME
+        <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html#sqlitefcntlvfsname>`__
+        file control against the named database (`main`, `temp`, attached
+        name).
+
+        This is useful to see which VFS is in use, and if inheritance is used
+        then ``/`` will separate the names.  If you have a :class:`VFSFile` in
+        use then its fully qualified class name will also be included.
+
+        If ``SQLITE_FCNTL_VFSNAME`` is not implemented, ``dbname`` is not a
+        database name, or an error occurred then ``None`` is returned."""
         ...
 
     def vtab_config(self, op: int, val: int = 0) -> None:
@@ -2343,30 +2366,38 @@ class VFSFile:
 
     def xFileControl(self, op: int, ptr: int) -> bool:
         """Receives `file control
-        <https://sqlite.org/c3ref/file_control.html>`_ request typically
-        issued by :meth:`Connection.file_control`.  See
-        :meth:`Connection.file_control` for an example of how to pass a
-        Python object to this routine.
+         <https://sqlite.org/c3ref/file_control.html>`_ request typically
+         issued by :meth:`Connection.file_control`.  See
+         :meth:`Connection.file_control` for an example of how to pass a
+         Python object to this routine.
 
-        :param op: A numeric code.  Codes below 100 are reserved for SQLite
-          internal use.
-        :param ptr: An integer corresponding to a pointer at the C level.
+         :param op: A numeric code.  Codes below 100 are reserved for SQLite
+           internal use.
+         :param ptr: An integer corresponding to a pointer at the C level.
 
-        :returns: A boolean indicating if the op was understood
+         :returns: A boolean indicating if the op was understood
 
-        Ensure you pass any unrecognised codes through to your super class.
-        For example::
+         Ensure you pass any unrecognised codes through to your super class.
+         For example::
 
-            def xFileControl(self, op: int, ptr: int) -> bool:
-                if op == 1027:
-                    process_quick(ptr)
-                elif op == 1028:
-                    obj=ctypes.py_object.from_address(ptr).value
-                else:
-                    # this ensures superclass implementation is called
-                    return super().xFileControl(op, ptr)
-               # we understood the op
-               return True"""
+             def xFileControl(self, op: int, ptr: int) -> bool:
+                 if op == 1027:
+                     process_quick(ptr)
+                 elif op == 1028:
+                     obj=ctypes.py_object.from_address(ptr).value
+                 else:
+                     # this ensures superclass implementation is called
+                     return super().xFileControl(op, ptr)
+                # we understood the op
+                return True
+
+        .. note::
+
+          `SQLITE_FCNTL_VFSNAME
+          <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html#sqlitefcntlvfsname>`__
+          is automatically handled for you dealing with the necessary memory allocation
+          and listing all the VFS if you are inheriting.  It includes the fully qualified
+          class name for this object."""
         ...
 
     def xFileSize(self) -> int:
