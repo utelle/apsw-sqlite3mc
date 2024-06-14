@@ -1,5 +1,5 @@
 .. image::  https://raw.githubusercontent.com/utelle/apsw-sqlite3mc/sqlite3mc/apsw-sqlite3mc-logo.jpg
-  :width: 215 px
+  :width: 512 px
   :alt: APSW SQLite Multiple Cipher logo - links to documentation
   :target: https://utelle.github.io/SQLite3MultipleCiphers/
 
