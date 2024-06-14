@@ -208,15 +208,15 @@ start with `SQLite format 3` while encrypted database files are random.
 Support/Discussions
 -------------------
 
-For SQLite questions, support, and issues, use the [SQLite
-Forum](https://sqlite.org/forum/forum).
+For SQLite questions, support, and issues, use the `SQLite
+Forum <https://sqlite.org/forum/forum>`__.`
 
-For APSW questions, support, and issues, see [your
-choices](https://rogerbinns.github.io/apsw/about.html#mailing-lists-contacts).
+For APSW questions, support, and issues, see `your
+choices <https://rogerbinns.github.io/apsw/about.html#mailing-lists-contacts>`__.
 
-For SQLite3MultipleCiphers questions, support, and issues see [the
-project page](https://github.com/utelle/SQLite3MultipleCiphers).
+For SQLite3MultipleCiphers questions, support, and issues see `the
+project page <https://github.com/utelle/SQLite3MultipleCiphers>`__.
 
 For APSW together with SQLite3MultipleCiphers questions, support, and
-issues see [the project
-page](https://github.com/utelle/apsw-sqlite3mc).
+issues see `the project page
+<https://github.com/utelle/apsw-sqlite3mc>`__.
