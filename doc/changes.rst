@@ -10,8 +10,11 @@ history <https://devguide.python.org/versions/>`__.
 APSW changes by version
 -----------------------
 
-next
-====
+3.46.0.1
+========
+
+:func:`apsw.ext.query_info` provides the count and names of bindings
+parameters.  (:issue:`528`)
 
 Address how errors are handled in VFS xRandomness routine, that is
 only called once by SQLite to seed its random number generator.
