@@ -59,7 +59,7 @@ Setting the key on a new database is the only change needed to your code.
 
   >>> import apsw
   >>> print(apsw.mc_version)
-  SQLite3 Multiple Ciphers 1.8.6
+  SQLite3 Multiple Ciphers 1.8.7
   >>> con = apsw.Connection("database.sqlite3")
   >>> con.pragma("key", "my secret passphrase")
   ok
