@@ -6,11 +6,13 @@
 
 /* msvc doesn't support vla, so do it the hard way */
 #if defined(_MSC_VER) || defined(__STDC_NO_VLA__)
-#define VLA_PYO(name, size) \
-  PyObject **name = alloca(sizeof(PyObject *) * (size))
+#define VLA(name, size, type) \
+  type *name = alloca(sizeof(type) * (size))
 #else
-#define VLA_PYO(name, size) PyObject *name[size]
+#define VLA(name, size, type) type name[size]
 #endif
+
+#define VLA_PYO(name, size) VLA(name, size, PyObject *)
 
 /* These macros are to address several issues:
 
@@ -142,14 +144,6 @@ apsw_write_unraisable(PyObject *hookobject)
 #ifdef PYPY_VERSION
   /* do nothing */
 #else
-#if PY_VERSION_HEX < 0x03090000
-  PyFrameObject *frame = PyThreadState_GET()->frame;
-  while (frame)
-  {
-    PyTraceBack_Here(frame);
-    frame = frame->f_back;
-  }
-#else
   PyFrameObject *prev = NULL, *frame = PyThreadState_GetFrame(PyThreadState_GET());
   while (frame)
   {
@@ -158,7 +152,6 @@ apsw_write_unraisable(PyObject *hookobject)
     Py_DECREF(frame);
     frame = prev;
   }
-#endif
 #endif
 
   /* Get the exception details */

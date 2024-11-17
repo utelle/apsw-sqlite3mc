@@ -1261,10 +1261,10 @@
 "Registers a `window function\n" \
 "<https://sqlite.org/windowfunctions.html#user_defined_aggregate_window_functions>`__\n" \
 "\n" \
-"  :param name: The string name of the function.  It should be less than 255 characters\n" \
-"  :param factory: Called to start a new window.  Use None to delete the function.\n" \
-"  :param numargs: How many arguments the function takes, with -1 meaning any number\n" \
-"  :param flags: `Function flags <https://www.sqlite.org/c3ref/c_deterministic.html>`__\n" \
+":param name: The string name of the function.  It should be less than 255 characters\n" \
+":param factory: Called to start a new window.  Use None to delete the function.\n" \
+":param numargs: How many arguments the function takes, with -1 meaning any number\n" \
+":param flags: `Function flags <https://www.sqlite.org/c3ref/c_deterministic.html>`__\n" \
 "\n" \
 "You need to provide callbacks for the ``step``, ``final``, ``value``\n" \
 "and ``inverse`` methods.  This can be done by having `factory` as a\n" \
@@ -1315,6 +1315,25 @@
 ":class:`Cursor` instance, and just needs to have the methods present\n" \
 "that are actually called.  These are likely to be `execute`,\n" \
 "`executemany`, `close` etc.\n" 
+
+#define  Connection_data_version_DOC "data_version($self,schema=None)\n--\n\nConnection.data_version(schema: Optional[str] = None) -> int\n\n" \
+"Unlike `pragma data_version\n" \
+"<https://sqlite.org/pragma.html#pragma_data_version>`__ this value\n" \
+"updates when changes are made by other connections, **AND** this one.\n" \
+"\n" \
+":param schema: `schema` is `main`, `temp`, the name in `ATTACH <https://sqlite.org/lang_attach.html>`__,\n" \
+"    defaulting to `main` if not supplied.\n" \
+"\n" \
+"Calls: `sqlite3_file_control <https://sqlite.org/c3ref/file_control.html>`__\n" 
+
+#define Connection_data_version_KWNAMES "schema"
+#define Connection_data_version_USAGE "Connection.data_version(schema: Optional[str] = None) -> int"
+
+#define Connection_data_version_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(schema), const char *)); \
+  assert(schema == 0); \
+} while(0)
+
 
 #define  Connection_db_filename_DOC "db_filename($self,name)\n--\n\nConnection.db_filename(name: str) -> str\n\n" \
 "Returns the full filename of the named (attached) database.  The\n" \
@@ -1555,6 +1574,41 @@
 "The WAL filename of the database,\n" \
 "\n" \
 "Calls: `sqlite3_filename_wal <https://sqlite.org/c3ref/filename_database.html>`__\n" 
+
+#define  Connection_fts5_tokenizer_DOC "fts5_tokenizer($self,name,args=None)\n--\n\nConnection.fts5_tokenizer(name: str, args: list[str] | None = None) -> apsw.FTS5Tokenizer\n\n" \
+"Returns the named tokenizer initialized with ``args``.  Names are case insensitive.\n" \
+"\n" \
+".. seealso::\n" \
+"\n" \
+"    * :meth:`register_fts5_tokenizer`\n" \
+"    * :doc:`textsearch`\n" 
+
+#define Connection_fts5_tokenizer_KWNAMES "name", "args"
+#define Connection_fts5_tokenizer_USAGE "Connection.fts5_tokenizer(name: str, args: list[str] | None = None) -> apsw.FTS5Tokenizer"
+
+#define Connection_fts5_tokenizer_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(name), const char *)); \
+  assert(__builtin_types_compatible_p(typeof(args), PyObject *)); \
+  assert(args == NULL); \
+} while(0)
+
+
+#define  Connection_fts5_tokenizer_available_DOC "fts5_tokenizer_available($self,name)\n--\n\nConnection.fts5_tokenizer_available(name: str) -> bool\n\n" \
+"Checks if the named tokenizer is registered.\n" \
+"\n" \
+".. seealso::\n" \
+"\n" \
+"    * :meth:`fts5_tokenizer`\n" \
+"    * :doc:`textsearch`\n" \
+"    * `FTS5 documentation <https://www.sqlite.org/fts5.html#custom_tokenizers>`__\n" 
+
+#define Connection_fts5_tokenizer_available_KWNAMES "name"
+#define Connection_fts5_tokenizer_available_USAGE "Connection.fts5_tokenizer_available(name: str) -> bool"
+
+#define Connection_fts5_tokenizer_available_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(name), const char *)); \
+} while(0)
+
 
 #define  Connection_get_autocommit_DOC "get_autocommit($self)\n--\n\nConnection.get_autocommit() -> bool\n\n" \
 "Returns if the Connection is in auto commit mode (ie not in a transaction).\n" \
@@ -1803,6 +1857,41 @@
 
 #define Connection_readonly_CHECK do { \
   assert(__builtin_types_compatible_p(typeof(name), const char *)); \
+} while(0)
+
+
+#define  Connection_register_fts5_function_DOC "register_fts5_function($self,name,function)\n--\n\nConnection.register_fts5_function(name: str, function: FTS5Function) -> None\n\n" \
+"Registers the (case insensitive) named function used as an `auxiliary\n" \
+"function  <https://www.sqlite.org/fts5.html#custom_auxiliary_functions>`__.\n" \
+"\n" \
+"The first parameter to the function will be :class:`FTS5ExtensionApi`\n" \
+"and the rest will be the function arguments at the SQL level.\n" 
+
+#define Connection_register_fts5_function_KWNAMES "name", "function"
+#define Connection_register_fts5_function_USAGE "Connection.register_fts5_function(name: str, function: FTS5Function) -> None"
+
+#define Connection_register_fts5_function_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(name), const char *)); \
+  assert(__builtin_types_compatible_p(typeof(function), PyObject *)); \
+} while(0)
+
+
+#define  Connection_register_fts5_tokenizer_DOC "register_fts5_tokenizer($self,name,tokenizer_factory)\n--\n\nConnection.register_fts5_tokenizer(name: str, tokenizer_factory: FTS5TokenizerFactory) -> None\n\n" \
+"Registers a tokenizer factory.  Names are case insensitive.  It is not possible to\n" \
+"unregister a tokenizer.\n" \
+"\n" \
+".. seealso::\n" \
+"\n" \
+"    * :meth:`fts5_tokenizer`\n" \
+"    * :doc:`textsearch`\n" \
+"    * `FTS5 documentation <https://www.sqlite.org/fts5.html#custom_tokenizers>`__\n" 
+
+#define Connection_register_fts5_tokenizer_KWNAMES "name", "tokenizer_factory"
+#define Connection_register_fts5_tokenizer_USAGE "Connection.register_fts5_tokenizer(name: str, tokenizer_factory: FTS5TokenizerFactory) -> None"
+
+#define Connection_register_fts5_tokenizer_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(name), const char *)); \
+  assert(__builtin_types_compatible_p(typeof(tokenizer_factory), PyObject *)); \
 } while(0)
 
 
@@ -2168,8 +2257,9 @@
 #define  Connection_table_exists_DOC "table_exists($self,dbname,table_name)\n--\n\nConnection.table_exists(dbname: Optional[str], table_name: str) -> bool\n\n" \
 "Returns True if the named table exists, else False.\n" \
 "\n" \
-"`dbname` is `main`, `temp`, the name in `ATTACH <https://sqlite.org/lang_attach.html>`__,\n" \
-" or None to search  all databases\n" \
+"``dbname`` is ``main``, ``temp``, the name in `ATTACH\n" \
+"<https://sqlite.org/lang_attach.html>`__, or None to search  all\n" \
+"databases\n" \
 "\n" \
 "Calls: `sqlite3_table_column_metadata <https://sqlite.org/c3ref/table_column_metadata.html>`__\n" 
 
@@ -2192,9 +2282,14 @@
 #define Connection_total_changes_USAGE "Connection.total_changes() -> int"
 #define Connection_total_changes_OLDDOC Connection_total_changes_USAGE "\n(Old less clear name totalchanges)"
 
-#define  Connection_trace_v2_DOC "trace_v2($self,mask,callback=None)\n--\n\nConnection.trace_v2(mask: int, callback: Optional[Callable[[dict], None]] = None) -> None\n\n" \
-"Registers a trace callback.  The callback is called with a dict of relevant values based\n" \
-"on the code.\n" \
+#define  Connection_trace_v2_DOC "trace_v2($self,mask,callback=None,*,id=None)\n--\n\nConnection.trace_v2(mask: int, callback: Optional[Callable[[dict], None]] = None, *, id: Optional[Any] = None) -> None\n\n" \
+"Registers a trace callback.  Multiple traces can be active at once\n" \
+"(implemented by APSW).  A callback of :class:`None` unregisters a\n" \
+"trace.  Registered callbacks are distinguished by their ``id`` - an\n" \
+"equality test is done to match ids.\n" \
+"\n" \
+"The callback is called with a dict of relevant values based on the\n" \
+"code.\n" \
 "\n" \
 ".. list-table::\n" \
 "  :header-rows: 1\n" \
@@ -2211,8 +2306,20 @@
 "    - Connection this trace event belongs to\n" \
 "  * - sql\n" \
 "    - :class:`str`\n" \
-"    - SQL text (except SQLITE_TRACE_CLOSE)\n" \
-"  * - profile\n" \
+"    - SQL text (except SQLITE_TRACE_ROW and SQLITE_TRACE_CLOSE).\n" \
+"  * - id\n" \
+"    - :class:`int`\n" \
+"    - An opaque key to correlate events on the same statement.  The\n" \
+"      id can be reused after SQLITE_TRACE_PROFILE.\n" \
+"  * - trigger\n" \
+"    - :class:`bool`\n" \
+"    - If `trigger <https://www.sqlite.org/lang_createtrigger.html>`__\n" \
+"      SQL is executing then this is ``True`` and the SQL is of the trigger.\n" \
+"      Virtual table nested queries also come through as trigger activity.\n" \
+"  * - total_changes\n" \
+"    - :class:`int`\n" \
+"    - Value of :meth:`total_changes`  (SQLITE_TRACE_STMT and SQLITE_TRACE_PROFILE only)\n" \
+"  * - nanoseconds\n" \
 "    - :class:`int`\n" \
 "    - nanoseconds SQL took to execute (SQLITE_TRACE_PROFILE only)\n" \
 "  * - stmt_status\n" \
@@ -2221,23 +2328,45 @@
 "      <https://www.sqlite.org/c3ref/c_stmtstatus_counter.html>`__ - eg\n" \
 "      *\"SQLITE_STMTSTATUS_VM_STEP\"* and corresponding integer values.\n" \
 "      The counters are reset each time a statement\n" \
-"      starts execution.\n" \
+"      starts execution.  This includes any changes made by triggers.\n" \
+"\n" \
+"Note that SQLite ignores any errors from the trace callbacks, so\n" \
+"whatever was being traced will still proceed.  Exceptions will be\n" \
+"delivered when your Python code resumes.\n" \
+"\n" \
+"If you register for all trace types, the following sequence will happen.\n" \
+"\n" \
+"* SQLITE_TRACE_STMT with `trigger` `False` and an `id` and `sql` of\n" \
+"  the statement.\n" \
+"* Multiple times: SQLITE_TRACE_STMT with the same `id` and `trigger`\n" \
+"  `True` if a trigger is executed.  The first time the `sql` will be\n" \
+"  ``TRIGGER name`` and then subsequent calls will be lines of the\n" \
+"  trigger.  This also happens for virtual tables that make queries.\n" \
+"* Multiple times: SQLITE_TRACE_ROW with the same `id` for each time\n" \
+"  execution stopped at a row. (Rows visited by triggers do not cause\n" \
+"  thie event)\n" \
+"* SQLITE_TRACE_PROFILE with the same `id` for any virtual table\n" \
+"  queries - the ``sql`` will be of those queries\n" \
+"* SQLITE_TRACE_PROFILE with the same `id` for the initial SQL.\n" \
 "\n" \
 ".. seealso::\n" \
 "\n" \
 "  * :ref:`Example <example_trace_v2>`\n" \
+"  * :class:`apsw.ext.Trace`\n" \
 "\n" \
 "Calls:\n" \
 "  * `sqlite3_trace_v2 <https://sqlite.org/c3ref/trace_v2.html>`__\n" \
 "  * `sqlite3_stmt_status <https://sqlite.org/c3ref/stmt_status.html>`__\n" 
 
-#define Connection_trace_v2_KWNAMES "mask", "callback"
-#define Connection_trace_v2_USAGE "Connection.trace_v2(mask: int, callback: Optional[Callable[[dict], None]] = None) -> None"
+#define Connection_trace_v2_KWNAMES "mask", "callback", "id"
+#define Connection_trace_v2_USAGE "Connection.trace_v2(mask: int, callback: Optional[Callable[[dict], None]] = None, *, id: Optional[Any] = None) -> None"
 
 #define Connection_trace_v2_CHECK do { \
   assert(__builtin_types_compatible_p(typeof(mask), int)); \
   assert(__builtin_types_compatible_p(typeof(callback), PyObject *)); \
   assert(callback == NULL); \
+  assert(__builtin_types_compatible_p(typeof(id), PyObject *)); \
+  assert(id == NULL); \
 } while(0)
 
 
@@ -2695,6 +2824,282 @@
 #define Cursor_set_row_trace_OLDNAME "setrowtrace"
 #define Cursor_set_row_trace_OLDDOC Cursor_set_row_trace_USAGE "\n(Old less clear name setrowtrace)"
 
+#define  FTS5ExtensionApi_aux_data_DOC ":type: Any\n" \
+"\n" \
+"You can store an object as `auxiliary data <https://www.sqlite.org/fts5.html#xSetAuxdata>`__\n" \
+"which is available across matching rows.  It starts out as :class:`None`.\n" \
+"\n" \
+"An example use is to do up front calculations once, rather than on\n" \
+"every matched row, such as\n" \
+":func:`fts5aux.inverse_document_frequency`.\n" 
+
+#define  FTS5ExtensionApi_class_DOC "`Auxiliary functions\n" \
+"<https://www.sqlite.org/fts5.html#_auxiliary_functions_>`__  run in\n" \
+"the context of a FTS5 search, and can be used for ranking,\n" \
+"highlighting, and similar operations.  Auxiliary functions are\n" \
+"registered via :meth:`Connection.register_fts5_function`.  This wraps\n" \
+"the `auxiliary functions API\n" \
+"<https://www.sqlite.org/fts5.html#custom_auxiliary_functions>`__\n" \
+"passed as the first parameter to auxiliary functions.\n" \
+"\n" \
+"See :ref:`the example <example_fts5_auxfunc>`.\n" 
+
+#define  FTS5ExtensionApi_column_count_DOC ":type: int\n" \
+"\n" \
+"Returns the `number of columns in the table\n" \
+"<https://www.sqlite.org/fts5.html#xColumnCount>`__\n" 
+
+#define  FTS5ExtensionApi_column_locale_DOC "column_locale($self,column)\n--\n\nFTS5ExtensionApi.column_locale(column: int) -> str | None\n\n" \
+"`Retrieves the locale for a column  <https://www.sqlite.org/fts5.html#xColumnLocale>`__ on\n" \
+"this row.\n" 
+
+#define FTS5ExtensionApi_column_locale_KWNAMES "column"
+#define FTS5ExtensionApi_column_locale_USAGE "FTS5ExtensionApi.column_locale(column: int) -> str | None"
+
+#define FTS5ExtensionApi_column_locale_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(column), int)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_column_size_DOC "column_size($self,col=-1)\n--\n\nFTS5ExtensionApi.column_size(col: int = -1) -> int\n\n" \
+"Returns the `total number of tokens in the current row\n" \
+"<https://www.sqlite.org/fts5.html#xColumnSize>`__ for a specific\n" \
+"column, or if ``col`` is negative then for all columns.\n" 
+
+#define FTS5ExtensionApi_column_size_KWNAMES "col"
+#define FTS5ExtensionApi_column_size_USAGE "FTS5ExtensionApi.column_size(col: int = -1) -> int"
+
+#define FTS5ExtensionApi_column_size_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(col), int)); \
+  assert(col == (-1)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_column_text_DOC "column_text($self,col)\n--\n\nFTS5ExtensionApi.column_text(col: int) -> bytes\n\n" \
+"Returns the `utf8 bytes for the column of the current row <https://www.sqlite.org/fts5.html#xColumnText>`__.\n" 
+
+#define FTS5ExtensionApi_column_text_KWNAMES "col"
+#define FTS5ExtensionApi_column_text_USAGE "FTS5ExtensionApi.column_text(col: int) -> bytes"
+
+#define FTS5ExtensionApi_column_text_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(col), int)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_column_total_size_DOC "column_total_size($self,col=-1)\n--\n\nFTS5ExtensionApi.column_total_size(col: int = -1) -> int\n\n" \
+"Returns the `total number of tokens in the table\n" \
+"<https://www.sqlite.org/fts5.html#xColumnTotalSize>`__ for a specific\n" \
+"column, or if ``col`` is negative then for all columns.\n" 
+
+#define FTS5ExtensionApi_column_total_size_KWNAMES "col"
+#define FTS5ExtensionApi_column_total_size_USAGE "FTS5ExtensionApi.column_total_size(col: int = -1) -> int"
+
+#define FTS5ExtensionApi_column_total_size_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(col), int)); \
+  assert(col == (-1)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_inst_count_DOC ":type: int\n" \
+"\n" \
+"Returns the `number of hits in the current row\n" \
+"<https://www.sqlite.org/fts5.html#xInstCount>`__\n" 
+
+#define  FTS5ExtensionApi_inst_tokens_DOC "inst_tokens($self,inst)\n--\n\nFTS5ExtensionApi.inst_tokens(inst: int) -> tuple[str, ...] | None\n\n" \
+"`Access tokens of hit inst in current row <https://www.sqlite.org/fts5.html#xInstToken>`__.\n" \
+"None is returned if the call is not supported.\n" 
+
+#define FTS5ExtensionApi_inst_tokens_KWNAMES "inst"
+#define FTS5ExtensionApi_inst_tokens_USAGE "FTS5ExtensionApi.inst_tokens(inst: int) -> tuple[str, ...] | None"
+
+#define FTS5ExtensionApi_inst_tokens_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(inst), int)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_phrase_column_offsets_DOC "phrase_column_offsets($self,phrase,column)\n--\n\nFTS5ExtensionApi.phrase_column_offsets(phrase: int, column: int) -> list[int]\n\n" \
+"Returns `token offsets the phrase number occurs in\n" \
+"<https://www.sqlite.org/fts5.html#xPhraseFirst>`__  in the specified\n" \
+"column.\n" 
+
+#define FTS5ExtensionApi_phrase_column_offsets_KWNAMES "phrase", "column"
+#define FTS5ExtensionApi_phrase_column_offsets_USAGE "FTS5ExtensionApi.phrase_column_offsets(phrase: int, column: int) -> list[int]"
+
+#define FTS5ExtensionApi_phrase_column_offsets_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(phrase), int)); \
+  assert(__builtin_types_compatible_p(typeof(column), int)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_phrase_columns_DOC "phrase_columns($self,phrase)\n--\n\nFTS5ExtensionApi.phrase_columns(phrase: int) -> tuple[int]\n\n" \
+"Returns `which columns the phrase number occurs in <https://www.sqlite.org/fts5.html#xPhraseFirstColumn>`__\n" 
+
+#define FTS5ExtensionApi_phrase_columns_KWNAMES "phrase"
+#define FTS5ExtensionApi_phrase_columns_USAGE "FTS5ExtensionApi.phrase_columns(phrase: int) -> tuple[int]"
+
+#define FTS5ExtensionApi_phrase_columns_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(phrase), int)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_phrase_count_DOC ":type: int\n" \
+"\n" \
+"Returns the `number of phrases in the query\n" \
+"<https://www.sqlite.org/fts5.html#xPhraseCount>`__\n" 
+
+#define  FTS5ExtensionApi_phrase_locations_DOC "phrase_locations($self,phrase)\n--\n\nFTS5ExtensionApi.phrase_locations(phrase: int) -> list[list[int]]\n\n" \
+"Returns `which columns and token offsets  the phrase number occurs in\n" \
+"<https://www.sqlite.org/fts5.html#xPhraseFirst>`__.\n" \
+"\n" \
+"The returned list is the same length as the number of columns.  Each\n" \
+"member is a list of token offsets in that column, and will be empty\n" \
+"if the phrase is not in that column.\n" 
+
+#define FTS5ExtensionApi_phrase_locations_KWNAMES "phrase"
+#define FTS5ExtensionApi_phrase_locations_USAGE "FTS5ExtensionApi.phrase_locations(phrase: int) -> list[list[int]]"
+
+#define FTS5ExtensionApi_phrase_locations_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(phrase), int)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_phrases_DOC ":type: tuple[tuple[str | None, ...], ...]\n" \
+"\n" \
+"A tuple where each member is a phrase from the query.  Each phrase is a tuple\n" \
+"of str (or None when not available) per token of the phrase.\n" \
+"\n" \
+"This combines the results of `xPhraseCount <https://www.sqlite.org/fts5.html#xPhraseCount>`__,\n" \
+"`xPhraseSize <https://www.sqlite.org/fts5.html#xPhraseSize>`__ and\n" \
+"`xQueryToken <https://www.sqlite.org/fts5.html#xQueryToken>`__\n" 
+
+#define  FTS5ExtensionApi_query_phrase_DOC "query_phrase($self,phrase,callback,closure)\n--\n\nFTS5ExtensionApi.query_phrase(phrase: int, callback: FTS5QueryPhrase, closure: Any) -> None\n\n" \
+"Searches the table for the `numbered query <https://www.sqlite.org/fts5.html#xQueryPhrase>`__.\n" \
+"The callback takes two parameters - a different :class:`apsw.FTS5ExtensionApi` and closure.\n" \
+"\n" \
+"An example usage for this method is to see how often the phrases occur in the table.  Setup a\n" \
+"tracking counter here, and then in the callback you can update it on each visited row.  This\n" \
+"is shown in :ref:`the example <example_fts5_auxfunc>`.\n" 
+
+#define FTS5ExtensionApi_query_phrase_KWNAMES "phrase", "callback", "closure"
+#define FTS5ExtensionApi_query_phrase_USAGE "FTS5ExtensionApi.query_phrase(phrase: int, callback: FTS5QueryPhrase, closure: Any) -> None"
+
+#define FTS5ExtensionApi_query_phrase_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(phrase), int)); \
+  assert(__builtin_types_compatible_p(typeof(callback), PyObject *)); \
+  assert(__builtin_types_compatible_p(typeof(closure), PyObject *)); \
+} while(0)
+
+
+#define  FTS5ExtensionApi_row_count_DOC ":type: int\n" \
+"\n" \
+"Returns the `number of rows in the table\n" \
+"<https://www.sqlite.org/fts5.html#xRowCount>`__\n" 
+
+#define  FTS5ExtensionApi_rowid_DOC ":type: int\n" \
+"\n" \
+"Rowid of the `current row <https://www.sqlite.org/fts5.html#xGetAuxdata>`__\n" 
+
+#define  FTS5ExtensionApi_tokenize_DOC "tokenize($self,utf8,locale,*,include_offsets=True,include_colocated=True)\n--\n\nFTS5ExtensionApi.tokenize(utf8: bytes, locale: Optional[str], *, include_offsets: bool = True, include_colocated: bool = True) -> list\n\n" \
+"`Tokenizes the utf8 <https://www.sqlite.org/fts5.html#xTokenize_v2>`__.  FTS5 sets the reason to ``FTS5_TOKENIZE_AUX``.\n" \
+"See :meth:`apsw.FTS5Tokenizer.__call__` for details.\n" 
+
+#define FTS5ExtensionApi_tokenize_KWNAMES "utf8", "locale", "include_offsets", "include_colocated"
+#define FTS5ExtensionApi_tokenize_USAGE "FTS5ExtensionApi.tokenize(utf8: bytes, locale: Optional[str], *, include_offsets: bool = True, include_colocated: bool = True) -> list"
+
+#define FTS5ExtensionApi_tokenize_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(utf8), PyObject *)); \
+  assert(__builtin_types_compatible_p(typeof(locale), const char *)); \
+  assert(__builtin_types_compatible_p(typeof(locale_size), Py_ssize_t )); \
+  assert(locale == NULL && locale_size == 0); \
+  assert(__builtin_types_compatible_p(typeof(include_offsets), int)); \
+  assert(include_offsets == 1); \
+  assert(__builtin_types_compatible_p(typeof(include_colocated), int)); \
+  assert(include_colocated == 1); \
+} while(0)
+
+
+#define  FTS5Tokenizer_args_DOC ":type: tuple[str]\n" \
+"\n" \
+"The arguments the tokenizer was created with.\n" 
+
+#define  FTS5Tokenizer_call_DOC "__call__($self,utf8,flags,locale,*,include_offsets=True,include_colocated=True)\n--\n\nFTS5Tokenizer.__call__(utf8: bytes, flags: int,  locale: Optional[str], *, include_offsets: bool = True, include_colocated: bool = True) -> list[tuple[int, int, *tuple[str, ...]]]\n\n" \
+"Does a tokenization, returning a list of the results.  If you have no\n" \
+"interest in token offsets or colocated tokens then they can be omitted from\n" \
+"the results.\n" \
+"\n" \
+":param utf8: Input bytes\n" \
+":param reason: :data:`Reason <apsw.mapping_fts5_tokenize_reason>` flag\n" \
+":param include_offsets: Returned list includes offsets into utf8 for each token\n" \
+":param include_colocated: Returned list can include colocated tokens\n" \
+"\n" \
+"Example outputs\n" \
+"---------------\n" \
+"\n" \
+"Tokenizing ``b\"first place\"`` where ``1st`` has been provided as a\n" \
+"colocated token for ``first``.\n" \
+"\n" \
+"(**Default**) include_offsets **True**, include_colocated **True**\n" \
+"\n" \
+"  .. code-block:: python\n" \
+"\n" \
+"        [\n" \
+"          (0, 5, \"first\", \"1st\"),\n" \
+"          (6, 11, \"place\"),\n" \
+"        ]\n" \
+"\n" \
+"include_offsets **False**, include_colocated **True**\n" \
+"\n" \
+"  .. code-block:: python\n" \
+"\n" \
+"        [\n" \
+"          (\"first\", \"1st\"),\n" \
+"          (\"place\", ),\n" \
+"        ]\n" \
+"\n" \
+"include_offsets **True**, include_colocated **False**\n" \
+"\n" \
+"  .. code-block:: python\n" \
+"\n" \
+"        [\n" \
+"          (0, 5, \"first\"),\n" \
+"          (6, 11, \"place\"),\n" \
+"        ]\n" \
+"\n" \
+"include_offsets **False**, include_colocated **False**\n" \
+"\n" \
+"  .. code-block:: python\n" \
+"\n" \
+"        [\n" \
+"          \"first\",\n" \
+"          \"place\",\n" \
+"        ]\n" 
+
+#define FTS5Tokenizer_call_KWNAMES "utf8", "flags", "locale", "include_offsets", "include_colocated"
+#define FTS5Tokenizer_call_USAGE "FTS5Tokenizer.__call__(utf8: bytes, flags: int,  locale: Optional[str], *, include_offsets: bool = True, include_colocated: bool = True) -> list[tuple[int, int, *tuple[str, ...]]]"
+
+#define FTS5Tokenizer_call_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(utf8), PyObject *)); \
+  assert(__builtin_types_compatible_p(typeof(flags), int)); \
+  assert(__builtin_types_compatible_p(typeof(locale), const char *)); \
+  assert(__builtin_types_compatible_p(typeof(locale_size), Py_ssize_t )); \
+  assert(locale == NULL && locale_size == 0); \
+  assert(__builtin_types_compatible_p(typeof(include_offsets), int)); \
+  assert(include_offsets == 1); \
+  assert(__builtin_types_compatible_p(typeof(include_colocated), int)); \
+  assert(include_colocated == 1); \
+} while(0)
+
+
+#define  FTS5Tokenizer_class_DOC "Wraps a registered tokenizer.  Returned by :meth:`Connection.fts5_tokenizer`.\n" 
+
+#define  FTS5Tokenizer_connection_DOC ":type: Connection\n" \
+"\n" \
+"The :class:`Connection` this tokenizer is registered with.\n" 
+
+#define  FTS5Tokenizer_name_DOC ":type: str\n" \
+"\n" \
+"Tokenizer name\n" 
+
 #define  IndexInfo_class_DOC "IndexInfo represents the `sqlite3_index_info\n" \
 "<https://www.sqlite.org/c3ref/index_info.html>`__ and associated\n" \
 "methods used in the :meth:`VTTable.BestIndexObject` method.\n" \
@@ -2703,7 +3108,7 @@
 "access members directly while needing to use get/set methods for array\n" \
 "members.\n" \
 "\n" \
-"You will get :exc:`ValueError` if you use the object outside of an\n" \
+"You will get :exc:`InvalidContextError` if you use the object outside of an\n" \
 "BestIndex method.\n" \
 "\n" \
 ":meth:`apsw.ext.index_info_to_dict` provides a convenient\n" \
@@ -3647,6 +4052,12 @@
 "<https://sqlite.org/c3ref/interrupt.html>`_ - use\n" \
 ":meth:`Connection.interrupt`.\n" 
 
+#define  InvalidContextError_exc_DOC "Context is no longer valid.  Examples include using an\n" \
+":class:`IndexInfo` outside of the :meth:`VTTable.BestIndexObject`\n" \
+"method, a registered :class:`FTS5Tokenizer` when the underlying\n" \
+"tokenizer has been deleted/replaced, or :meth:`Connection.vtab_config`\n" \
+"when not inside :meth:`VTModule.Create`.\n" 
+
 #define  LockedError_exc_DOC "`SQLITE_LOCKED <https://sqlite.org/rescode.html#locked>`__.  Shared\n" \
 "cache lock.\n" 
 
@@ -3659,6 +4070,8 @@
 "Python.  Examples include not having enough flags when opening a\n" \
 "connection (eg not including a READ or WRITE flag), or out of spec\n" \
 "such as registering a function with more than 127 parameters.\n" 
+
+#define  NoFTS5Error_exc_DOC "The FTS5 extension is not present in SQLite.\n" 
 
 #define  NoLFSError_exc_DOC "`SQLITE_NOLFS <https://sqlite.org/rescode.html#nolfs>`__.  SQLite\n" \
 "has attempted to use a feature not supported by the operating system\n" \

@@ -10,7 +10,7 @@ else
   args="$@"
 fi
 
-DEFS="-DAPSW_USE_SQLITE_AMALGAMATION -DAPSW_USE_SQLITE_CONFIG"
+DEFS="-DAPSW_USE_SQLITE_AMALGAMATION -DAPSW_USE_SQLITE_CONFIG -DSQLITE_ENABLE_FTS5"
 
 if [ -z "$CALLGRIND" ]
 then
@@ -41,9 +41,11 @@ MOREFLAGS=`$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('CCSHARE
 LINKER=`$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('LDSHARED'))"`
 SOSUFFIX=`$PYTHON -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"`
 
-rm -f apsw.o apsw.*.so apsw.so
+rm -f apsw/*.so
 set -ex
 
 $CC $CFLAGS $MOREFLAGS $opt $cflags $DEFS -Isqlite3/ -I$INCLUDEDIR -Isrc -I. -c src/apsw.c
 $LINKER -g $opt apsw.o -o apsw/__init__$SOSUFFIX
+$CC $CFLAGS $MOREFLAGS $opt $cflags $DEFS -I$INCLUDEDIR -Isrc -c src/unicode.c
+$LINKER -g $opt unicode.o -o apsw/_unicode$SOSUFFIX
 time env $apswopt valgrind $options $PYTHON $args

@@ -87,10 +87,14 @@ returns = {
             PySequence_GetItem PyLong_FromLongLong PySequence_GetSlice PyBytes_FromStringAndSize
             PyFloat_FromDouble  PyBool_FromLong PyCode_NewEmpty PyFloat_AsDouble
             PyIter_Next PyList_GetItem PyList_SetItem PyLong_FromVoidPtr PyMapping_GetItemString PyNumber_Float
-            PyNumber_Long PySequence_Fast PySequence_List PySequence_SetItem
+            PyNumber_Long PySequence_Fast PySequence_List PySequence_Tuple PySequence_SetItem
             PyFrame_New PyStructSequence_NewType PyStructSequence_New
-            PyMem_Realloc PyUnicode_FromFormat
-            PyObject_VectorcallMethod PyObject_Vectorcall PyWeakref_GetObject
+            PyMem_Realloc PyUnicode_FromFormat PyTuple_Pack PyUnicode_AsUTF8String
+            PyObject_VectorcallMethod PyObject_Vectorcall PyWeakref_GetObject PyUnicode_DecodeUTF8
+            PyLong_FromSsize_t PyLong_FromUnsignedLongLong PyLong_FromSize_t
+            PyFrozenSet_New PyType_FromModuleAndSpec PyModule_AddStringConstant
+
+            Connection_fts5_api get_token_value fts5extensionapi_acquire
 
             sqlite3_malloc sqlite3_malloc64 sqlite3_mprintf
             sqlite3_realloc sqlite3_realloc64
@@ -131,6 +135,8 @@ returns = {
             sqlite3_vfs_unregister sqlite3_vtab_config
             sqlite3_vtab_in_next sqlite3_vtab_rhs_value
             sqlite3_wal_autocheckpoint sqlite3_wal_checkpoint_v2
+
+            sqlite3_prepare
             """.split(),
     # py functions that return a number to indicate failure
     "number":
@@ -142,7 +148,7 @@ returns = {
         PyStructSequence_InitType2 PyList_Size PyLong_AsInt
 
         PyObject_GetBufferContiguous PyObject_GetBuffer
-        PyBuffer_IsContiguous PyWeakref_GetRef
+        PyBuffer_IsContiguous PyWeakref_GetRef _PyTuple_Resize
 
         connection_trace_and_exec getfunctionargs
         """.split(),

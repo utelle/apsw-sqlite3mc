@@ -14,6 +14,7 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
 
 #ifdef APSW_FAULT_CLEAR
 
+#undef Connection_fts5_api
 #undef MakeExistingException
 #undef PyBool_FromLong
 #undef PyBuffer_IsContiguous
@@ -26,6 +27,7 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
 #undef PyFloat_AsDouble
 #undef PyFloat_FromDouble
 #undef PyFrame_New
+#undef PyFrozenSet_New
 #undef PyIter_Next
 #undef PyList_Append
 #undef PyList_GetItem
@@ -38,12 +40,16 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
 #undef PyLong_AsLongLong
 #undef PyLong_FromLong
 #undef PyLong_FromLongLong
+#undef PyLong_FromSize_t
+#undef PyLong_FromSsize_t
+#undef PyLong_FromUnsignedLongLong
 #undef PyLong_FromVoidPtr
 #undef PyMapping_GetItemString
 #undef PyMem_Calloc
 #undef PyMem_Realloc
 #undef PyModule_AddIntConstant
 #undef PyModule_AddObject
+#undef PyModule_AddStringConstant
 #undef PyModule_Create2
 #undef PyNumber_Float
 #undef PyNumber_Long
@@ -64,15 +70,20 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
 #undef PySequence_List
 #undef PySequence_SetItem
 #undef PySequence_Size
+#undef PySequence_Tuple
 #undef PySet_Add
 #undef PySet_New
 #undef PyStructSequence_InitType2
 #undef PyStructSequence_New
 #undef PyStructSequence_NewType
 #undef PyTuple_New
+#undef PyTuple_Pack
+#undef PyType_FromModuleAndSpec
 #undef PyType_Ready
 #undef PyUnicode_AsUTF8
 #undef PyUnicode_AsUTF8AndSize
+#undef PyUnicode_AsUTF8String
+#undef PyUnicode_DecodeUTF8
 #undef PyUnicode_FromFormat
 #undef PyUnicode_FromString
 #undef PyUnicode_FromStringAndSize
@@ -84,12 +95,15 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
 #undef Py_VaBuildValue
 #undef _PyBytes_Resize
 #undef _PyObject_New
+#undef _PyTuple_Resize
 #undef allocfunccbinfo
 #undef apsw_strdup
 #undef connection_trace_and_exec
 #undef convert_column_to_pyobject
 #undef convert_value_to_pyobject
 #undef convertutf8string
+#undef fts5extensionapi_acquire
+#undef get_token_value
 #undef get_window_function_context
 #undef getfunctionargs
 #undef sqlite3_aggregate_context
@@ -148,6 +162,7 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
 #undef sqlite3_open
 #undef sqlite3_open_v2
 #undef sqlite3_overload_function
+#undef sqlite3_prepare
 #undef sqlite3_prepare_v3
 #undef sqlite3_realloc
 #undef sqlite3_realloc64
@@ -168,6 +183,21 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
 
 #else
 
+#define Connection_fts5_api(...) \
+({                                                                                                                                                            \
+    __auto_type _res_Connection_fts5_api = 0 ? Connection_fts5_api(__VA_ARGS__) : 0;                                                                          \
+                                                                                                                                                              \
+    _res_Connection_fts5_api = (typeof (_res_Connection_fts5_api))APSW_FaultInjectControl("Connection_fts5_api", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                              \
+    if ((typeof (_res_Connection_fts5_api))0x1FACADE == _res_Connection_fts5_api)                                                                             \
+       _res_Connection_fts5_api = Connection_fts5_api(__VA_ARGS__);                                                                                           \
+    else if ((typeof(_res_Connection_fts5_api))0x2FACADE == _res_Connection_fts5_api)                                                                         \
+    {                                                                                                                                                         \
+        Connection_fts5_api(__VA_ARGS__);                                                                                                                     \
+        _res_Connection_fts5_api = (typeof (_res_Connection_fts5_api))18;                                                                                     \
+    }                                                                                                                                                         \
+    _res_Connection_fts5_api;                                                                                                                                 \
+})
 #define MakeExistingException(...) \
 ({                                                                                                                                                                  \
     __auto_type _res_MakeExistingException = 0 ? MakeExistingException(__VA_ARGS__) : 0;                                                                            \
@@ -347,6 +377,21 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
         _res_PyFrame_New = (typeof (_res_PyFrame_New))18;                                                                             \
     }                                                                                                                                 \
     _res_PyFrame_New;                                                                                                                 \
+})
+#define PyFrozenSet_New(...) \
+({                                                                                                                                                \
+    __auto_type _res_PyFrozenSet_New = 0 ? PyFrozenSet_New(__VA_ARGS__) : 0;                                                                      \
+                                                                                                                                                  \
+    _res_PyFrozenSet_New = (typeof (_res_PyFrozenSet_New))APSW_FaultInjectControl("PyFrozenSet_New", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                  \
+    if ((typeof (_res_PyFrozenSet_New))0x1FACADE == _res_PyFrozenSet_New)                                                                         \
+       _res_PyFrozenSet_New = PyFrozenSet_New(__VA_ARGS__);                                                                                       \
+    else if ((typeof(_res_PyFrozenSet_New))0x2FACADE == _res_PyFrozenSet_New)                                                                     \
+    {                                                                                                                                             \
+        PyFrozenSet_New(__VA_ARGS__);                                                                                                             \
+        _res_PyFrozenSet_New = (typeof (_res_PyFrozenSet_New))18;                                                                                 \
+    }                                                                                                                                             \
+    _res_PyFrozenSet_New;                                                                                                                         \
 })
 #define PyIter_Next(...) \
 ({                                                                                                                                    \
@@ -528,6 +573,51 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
     }                                                                                                                                                         \
     _res_PyLong_FromLongLong;                                                                                                                                 \
 })
+#define PyLong_FromSize_t(...) \
+({                                                                                                                                                      \
+    __auto_type _res_PyLong_FromSize_t = 0 ? PyLong_FromSize_t(__VA_ARGS__) : 0;                                                                        \
+                                                                                                                                                        \
+    _res_PyLong_FromSize_t = (typeof (_res_PyLong_FromSize_t))APSW_FaultInjectControl("PyLong_FromSize_t", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                        \
+    if ((typeof (_res_PyLong_FromSize_t))0x1FACADE == _res_PyLong_FromSize_t)                                                                           \
+       _res_PyLong_FromSize_t = PyLong_FromSize_t(__VA_ARGS__);                                                                                         \
+    else if ((typeof(_res_PyLong_FromSize_t))0x2FACADE == _res_PyLong_FromSize_t)                                                                       \
+    {                                                                                                                                                   \
+        PyLong_FromSize_t(__VA_ARGS__);                                                                                                                 \
+        _res_PyLong_FromSize_t = (typeof (_res_PyLong_FromSize_t))18;                                                                                   \
+    }                                                                                                                                                   \
+    _res_PyLong_FromSize_t;                                                                                                                             \
+})
+#define PyLong_FromSsize_t(...) \
+({                                                                                                                                                         \
+    __auto_type _res_PyLong_FromSsize_t = 0 ? PyLong_FromSsize_t(__VA_ARGS__) : 0;                                                                         \
+                                                                                                                                                           \
+    _res_PyLong_FromSsize_t = (typeof (_res_PyLong_FromSsize_t))APSW_FaultInjectControl("PyLong_FromSsize_t", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                           \
+    if ((typeof (_res_PyLong_FromSsize_t))0x1FACADE == _res_PyLong_FromSsize_t)                                                                            \
+       _res_PyLong_FromSsize_t = PyLong_FromSsize_t(__VA_ARGS__);                                                                                          \
+    else if ((typeof(_res_PyLong_FromSsize_t))0x2FACADE == _res_PyLong_FromSsize_t)                                                                        \
+    {                                                                                                                                                      \
+        PyLong_FromSsize_t(__VA_ARGS__);                                                                                                                   \
+        _res_PyLong_FromSsize_t = (typeof (_res_PyLong_FromSsize_t))18;                                                                                    \
+    }                                                                                                                                                      \
+    _res_PyLong_FromSsize_t;                                                                                                                               \
+})
+#define PyLong_FromUnsignedLongLong(...) \
+({                                                                                                                                                                                    \
+    __auto_type _res_PyLong_FromUnsignedLongLong = 0 ? PyLong_FromUnsignedLongLong(__VA_ARGS__) : 0;                                                                                  \
+                                                                                                                                                                                      \
+    _res_PyLong_FromUnsignedLongLong = (typeof (_res_PyLong_FromUnsignedLongLong))APSW_FaultInjectControl("PyLong_FromUnsignedLongLong", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                                                      \
+    if ((typeof (_res_PyLong_FromUnsignedLongLong))0x1FACADE == _res_PyLong_FromUnsignedLongLong)                                                                                     \
+       _res_PyLong_FromUnsignedLongLong = PyLong_FromUnsignedLongLong(__VA_ARGS__);                                                                                                   \
+    else if ((typeof(_res_PyLong_FromUnsignedLongLong))0x2FACADE == _res_PyLong_FromUnsignedLongLong)                                                                                 \
+    {                                                                                                                                                                                 \
+        PyLong_FromUnsignedLongLong(__VA_ARGS__);                                                                                                                                     \
+        _res_PyLong_FromUnsignedLongLong = (typeof (_res_PyLong_FromUnsignedLongLong))18;                                                                                             \
+    }                                                                                                                                                                                 \
+    _res_PyLong_FromUnsignedLongLong;                                                                                                                                                 \
+})
 #define PyLong_FromVoidPtr(...) \
 ({                                                                                                                                                         \
     __auto_type _res_PyLong_FromVoidPtr = 0 ? PyLong_FromVoidPtr(__VA_ARGS__) : 0;                                                                         \
@@ -617,6 +707,21 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
         _res_PyModule_AddObject = (typeof (_res_PyModule_AddObject))18;                                                                                    \
     }                                                                                                                                                      \
     _res_PyModule_AddObject;                                                                                                                               \
+})
+#define PyModule_AddStringConstant(...) \
+({                                                                                                                                                                                 \
+    __auto_type _res_PyModule_AddStringConstant = 0 ? PyModule_AddStringConstant(__VA_ARGS__) : 0;                                                                                 \
+                                                                                                                                                                                   \
+    _res_PyModule_AddStringConstant = (typeof (_res_PyModule_AddStringConstant))APSW_FaultInjectControl("PyModule_AddStringConstant", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                                                   \
+    if ((typeof (_res_PyModule_AddStringConstant))0x1FACADE == _res_PyModule_AddStringConstant)                                                                                    \
+       _res_PyModule_AddStringConstant = PyModule_AddStringConstant(__VA_ARGS__);                                                                                                  \
+    else if ((typeof(_res_PyModule_AddStringConstant))0x2FACADE == _res_PyModule_AddStringConstant)                                                                                \
+    {                                                                                                                                                                              \
+        PyModule_AddStringConstant(__VA_ARGS__);                                                                                                                                   \
+        _res_PyModule_AddStringConstant = (typeof (_res_PyModule_AddStringConstant))18;                                                                                            \
+    }                                                                                                                                                                              \
+    _res_PyModule_AddStringConstant;                                                                                                                                               \
 })
 #define PyModule_Create2(...) \
 ({                                                                                                                                                   \
@@ -918,6 +1023,21 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
     }                                                                                                                                             \
     _res_PySequence_Size;                                                                                                                         \
 })
+#define PySequence_Tuple(...) \
+({                                                                                                                                                   \
+    __auto_type _res_PySequence_Tuple = 0 ? PySequence_Tuple(__VA_ARGS__) : 0;                                                                       \
+                                                                                                                                                     \
+    _res_PySequence_Tuple = (typeof (_res_PySequence_Tuple))APSW_FaultInjectControl("PySequence_Tuple", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                     \
+    if ((typeof (_res_PySequence_Tuple))0x1FACADE == _res_PySequence_Tuple)                                                                          \
+       _res_PySequence_Tuple = PySequence_Tuple(__VA_ARGS__);                                                                                        \
+    else if ((typeof(_res_PySequence_Tuple))0x2FACADE == _res_PySequence_Tuple)                                                                      \
+    {                                                                                                                                                \
+        PySequence_Tuple(__VA_ARGS__);                                                                                                               \
+        _res_PySequence_Tuple = (typeof (_res_PySequence_Tuple))18;                                                                                  \
+    }                                                                                                                                                \
+    _res_PySequence_Tuple;                                                                                                                           \
+})
 #define PySet_Add(...) \
 ({                                                                                                                              \
     __auto_type _res_PySet_Add = 0 ? PySet_Add(__VA_ARGS__) : 0;                                                                \
@@ -1008,6 +1128,36 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
     }                                                                                                                                 \
     _res_PyTuple_New;                                                                                                                 \
 })
+#define PyTuple_Pack(...) \
+({                                                                                                                                       \
+    __auto_type _res_PyTuple_Pack = 0 ? PyTuple_Pack(__VA_ARGS__) : 0;                                                                   \
+                                                                                                                                         \
+    _res_PyTuple_Pack = (typeof (_res_PyTuple_Pack))APSW_FaultInjectControl("PyTuple_Pack", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                         \
+    if ((typeof (_res_PyTuple_Pack))0x1FACADE == _res_PyTuple_Pack)                                                                      \
+       _res_PyTuple_Pack = PyTuple_Pack(__VA_ARGS__);                                                                                    \
+    else if ((typeof(_res_PyTuple_Pack))0x2FACADE == _res_PyTuple_Pack)                                                                  \
+    {                                                                                                                                    \
+        PyTuple_Pack(__VA_ARGS__);                                                                                                       \
+        _res_PyTuple_Pack = (typeof (_res_PyTuple_Pack))18;                                                                              \
+    }                                                                                                                                    \
+    _res_PyTuple_Pack;                                                                                                                   \
+})
+#define PyType_FromModuleAndSpec(...) \
+({                                                                                                                                                                           \
+    __auto_type _res_PyType_FromModuleAndSpec = 0 ? PyType_FromModuleAndSpec(__VA_ARGS__) : 0;                                                                               \
+                                                                                                                                                                             \
+    _res_PyType_FromModuleAndSpec = (typeof (_res_PyType_FromModuleAndSpec))APSW_FaultInjectControl("PyType_FromModuleAndSpec", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                                             \
+    if ((typeof (_res_PyType_FromModuleAndSpec))0x1FACADE == _res_PyType_FromModuleAndSpec)                                                                                  \
+       _res_PyType_FromModuleAndSpec = PyType_FromModuleAndSpec(__VA_ARGS__);                                                                                                \
+    else if ((typeof(_res_PyType_FromModuleAndSpec))0x2FACADE == _res_PyType_FromModuleAndSpec)                                                                              \
+    {                                                                                                                                                                        \
+        PyType_FromModuleAndSpec(__VA_ARGS__);                                                                                                                               \
+        _res_PyType_FromModuleAndSpec = (typeof (_res_PyType_FromModuleAndSpec))18;                                                                                          \
+    }                                                                                                                                                                        \
+    _res_PyType_FromModuleAndSpec;                                                                                                                                           \
+})
 #define PyType_Ready(...) \
 ({                                                                                                                                       \
     __auto_type _res_PyType_Ready = 0 ? PyType_Ready(__VA_ARGS__) : 0;                                                                   \
@@ -1052,6 +1202,36 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
         _res_PyUnicode_AsUTF8AndSize = (typeof (_res_PyUnicode_AsUTF8AndSize))18;                                                                                         \
     }                                                                                                                                                                     \
     _res_PyUnicode_AsUTF8AndSize;                                                                                                                                         \
+})
+#define PyUnicode_AsUTF8String(...) \
+({                                                                                                                                                                     \
+    __auto_type _res_PyUnicode_AsUTF8String = 0 ? PyUnicode_AsUTF8String(__VA_ARGS__) : 0;                                                                             \
+                                                                                                                                                                       \
+    _res_PyUnicode_AsUTF8String = (typeof (_res_PyUnicode_AsUTF8String))APSW_FaultInjectControl("PyUnicode_AsUTF8String", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                                       \
+    if ((typeof (_res_PyUnicode_AsUTF8String))0x1FACADE == _res_PyUnicode_AsUTF8String)                                                                                \
+       _res_PyUnicode_AsUTF8String = PyUnicode_AsUTF8String(__VA_ARGS__);                                                                                              \
+    else if ((typeof(_res_PyUnicode_AsUTF8String))0x2FACADE == _res_PyUnicode_AsUTF8String)                                                                            \
+    {                                                                                                                                                                  \
+        PyUnicode_AsUTF8String(__VA_ARGS__);                                                                                                                           \
+        _res_PyUnicode_AsUTF8String = (typeof (_res_PyUnicode_AsUTF8String))18;                                                                                        \
+    }                                                                                                                                                                  \
+    _res_PyUnicode_AsUTF8String;                                                                                                                                       \
+})
+#define PyUnicode_DecodeUTF8(...) \
+({                                                                                                                                                               \
+    __auto_type _res_PyUnicode_DecodeUTF8 = 0 ? PyUnicode_DecodeUTF8(__VA_ARGS__) : 0;                                                                           \
+                                                                                                                                                                 \
+    _res_PyUnicode_DecodeUTF8 = (typeof (_res_PyUnicode_DecodeUTF8))APSW_FaultInjectControl("PyUnicode_DecodeUTF8", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                                 \
+    if ((typeof (_res_PyUnicode_DecodeUTF8))0x1FACADE == _res_PyUnicode_DecodeUTF8)                                                                              \
+       _res_PyUnicode_DecodeUTF8 = PyUnicode_DecodeUTF8(__VA_ARGS__);                                                                                            \
+    else if ((typeof(_res_PyUnicode_DecodeUTF8))0x2FACADE == _res_PyUnicode_DecodeUTF8)                                                                          \
+    {                                                                                                                                                            \
+        PyUnicode_DecodeUTF8(__VA_ARGS__);                                                                                                                       \
+        _res_PyUnicode_DecodeUTF8 = (typeof (_res_PyUnicode_DecodeUTF8))18;                                                                                      \
+    }                                                                                                                                                            \
+    _res_PyUnicode_DecodeUTF8;                                                                                                                                   \
 })
 #define PyUnicode_FromFormat(...) \
 ({                                                                                                                                                               \
@@ -1256,6 +1436,21 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
     }                                                                                                                                       \
     _res__PyObject_New;                                                                                                                     \
 })
+#define _PyTuple_Resize(...) \
+({                                                                                                                                                \
+    __auto_type _res__PyTuple_Resize = 0 ? _PyTuple_Resize(__VA_ARGS__) : 0;                                                                      \
+                                                                                                                                                  \
+    _res__PyTuple_Resize = (typeof (_res__PyTuple_Resize))APSW_FaultInjectControl("_PyTuple_Resize", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                  \
+    if ((typeof (_res__PyTuple_Resize))0x1FACADE == _res__PyTuple_Resize)                                                                         \
+       _res__PyTuple_Resize = _PyTuple_Resize(__VA_ARGS__);                                                                                       \
+    else if ((typeof(_res__PyTuple_Resize))0x2FACADE == _res__PyTuple_Resize)                                                                     \
+    {                                                                                                                                             \
+        _PyTuple_Resize(__VA_ARGS__);                                                                                                             \
+        _res__PyTuple_Resize = (typeof (_res__PyTuple_Resize))18;                                                                                 \
+    }                                                                                                                                             \
+    _res__PyTuple_Resize;                                                                                                                         \
+})
 #define allocfunccbinfo(...) \
 ({                                                                                                                                                \
     __auto_type _res_allocfunccbinfo = 0 ? allocfunccbinfo(__VA_ARGS__) : 0;                                                                      \
@@ -1345,6 +1540,36 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
         _res_convertutf8string = (typeof (_res_convertutf8string))18;                                                                                   \
     }                                                                                                                                                   \
     _res_convertutf8string;                                                                                                                             \
+})
+#define fts5extensionapi_acquire(...) \
+({                                                                                                                                                                           \
+    __auto_type _res_fts5extensionapi_acquire = 0 ? fts5extensionapi_acquire(__VA_ARGS__) : 0;                                                                               \
+                                                                                                                                                                             \
+    _res_fts5extensionapi_acquire = (typeof (_res_fts5extensionapi_acquire))APSW_FaultInjectControl("fts5extensionapi_acquire", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                                             \
+    if ((typeof (_res_fts5extensionapi_acquire))0x1FACADE == _res_fts5extensionapi_acquire)                                                                                  \
+       _res_fts5extensionapi_acquire = fts5extensionapi_acquire(__VA_ARGS__);                                                                                                \
+    else if ((typeof(_res_fts5extensionapi_acquire))0x2FACADE == _res_fts5extensionapi_acquire)                                                                              \
+    {                                                                                                                                                                        \
+        fts5extensionapi_acquire(__VA_ARGS__);                                                                                                                               \
+        _res_fts5extensionapi_acquire = (typeof (_res_fts5extensionapi_acquire))18;                                                                                          \
+    }                                                                                                                                                                        \
+    _res_fts5extensionapi_acquire;                                                                                                                                           \
+})
+#define get_token_value(...) \
+({                                                                                                                                                \
+    __auto_type _res_get_token_value = 0 ? get_token_value(__VA_ARGS__) : 0;                                                                      \
+                                                                                                                                                  \
+    _res_get_token_value = (typeof (_res_get_token_value))APSW_FaultInjectControl("get_token_value", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                  \
+    if ((typeof (_res_get_token_value))0x1FACADE == _res_get_token_value)                                                                         \
+       _res_get_token_value = get_token_value(__VA_ARGS__);                                                                                       \
+    else if ((typeof(_res_get_token_value))0x2FACADE == _res_get_token_value)                                                                     \
+    {                                                                                                                                             \
+        get_token_value(__VA_ARGS__);                                                                                                             \
+        _res_get_token_value = (typeof (_res_get_token_value))18;                                                                                 \
+    }                                                                                                                                             \
+    _res_get_token_value;                                                                                                                         \
 })
 #define get_window_function_context(...) \
 ({                                                                                                                                                                                    \
@@ -2215,6 +2440,21 @@ APSW_FaultInjectControl(const char *faultfunction, const char *filename, const c
         _res_sqlite3_overload_function = (typeof (_res_sqlite3_overload_function))18;                                                                                           \
     }                                                                                                                                                                           \
     _res_sqlite3_overload_function;                                                                                                                                             \
+})
+#define sqlite3_prepare(...) \
+({                                                                                                                                                \
+    __auto_type _res_sqlite3_prepare = 0 ? sqlite3_prepare(__VA_ARGS__) : 0;                                                                      \
+                                                                                                                                                  \
+    _res_sqlite3_prepare = (typeof (_res_sqlite3_prepare))APSW_FaultInjectControl("sqlite3_prepare", __FILE__, __func__, __LINE__, #__VA_ARGS__); \
+                                                                                                                                                  \
+    if ((typeof (_res_sqlite3_prepare))0x1FACADE == _res_sqlite3_prepare)                                                                         \
+       _res_sqlite3_prepare = sqlite3_prepare(__VA_ARGS__);                                                                                       \
+    else if ((typeof(_res_sqlite3_prepare))0x2FACADE == _res_sqlite3_prepare)                                                                     \
+    {                                                                                                                                             \
+        sqlite3_prepare(__VA_ARGS__);                                                                                                             \
+        _res_sqlite3_prepare = (typeof (_res_sqlite3_prepare))18;                                                                                 \
+    }                                                                                                                                             \
+    _res_sqlite3_prepare;                                                                                                                         \
 })
 #define sqlite3_prepare_v3(...) \
 ({                                                                                                                                                         \

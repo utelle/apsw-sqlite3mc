@@ -63,6 +63,7 @@ assert version and today
 today_fmt = '%B %d, %Y'
 
 exclude_trees = ['build']
+exclude_patterns = ["fts.rst"]
 
 extlinks_detect_hardcoded_links = True
 
@@ -75,7 +76,6 @@ html_title = f"{ project } { version } documentation"
 html_theme = 'sphinx_rtd_theme'
 html_theme_options = {
     "analytics_id": "G-2NR9GDCQLT",
-    "style_external_links": True,
     "prev_next_buttons_location": "both",
 }
 html_css_files = ["apsw.css"]
@@ -119,7 +119,7 @@ latex_logo = html_logo
 
 
 def skip_Shell_members(app, what, name, obj, skip, options):
-    if name.startswith("command_") or name.startswith("output_"):
+    if (name.startswith("command_") or name.startswith("output_")) and "Shell." in str(obj):
         return True
     return skip
 

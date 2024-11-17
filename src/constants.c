@@ -87,9 +87,9 @@ add_apsw_constants(PyObject *module)
     /* Authorizer Return Codes */
     the_dict = Py_BuildValue(
         "{siissiissiis}",
-        "SQLITE_OK", SQLITE_OK, SQLITE_OK, "SQLITE_OK",
         "SQLITE_DENY", SQLITE_DENY, SQLITE_DENY, "SQLITE_DENY",
-        "SQLITE_IGNORE", SQLITE_IGNORE, SQLITE_IGNORE, "SQLITE_IGNORE");
+        "SQLITE_IGNORE", SQLITE_IGNORE, SQLITE_IGNORE, "SQLITE_IGNORE",
+        "SQLITE_OK", SQLITE_OK, SQLITE_OK, "SQLITE_OK");
     if (!the_dict)
     {
         assert(PyErr_Occurred());
@@ -167,9 +167,9 @@ add_apsw_constants(PyObject *module)
     /* Conflict resolution modes */
     the_dict = Py_BuildValue(
         "{siissiissiissiissiis}",
-        "SQLITE_IGNORE", SQLITE_IGNORE, SQLITE_IGNORE, "SQLITE_IGNORE",
         "SQLITE_ABORT", SQLITE_ABORT, SQLITE_ABORT, "SQLITE_ABORT",
         "SQLITE_FAIL", SQLITE_FAIL, SQLITE_FAIL, "SQLITE_FAIL",
+        "SQLITE_IGNORE", SQLITE_IGNORE, SQLITE_IGNORE, "SQLITE_IGNORE",
         "SQLITE_REPLACE", SQLITE_REPLACE, SQLITE_REPLACE, "SQLITE_REPLACE",
         "SQLITE_ROLLBACK", SQLITE_ROLLBACK, SQLITE_ROLLBACK, "SQLITE_ROLLBACK");
     if (!the_dict)
@@ -342,6 +342,41 @@ add_apsw_constants(PyObject *module)
         return -1;
     }
 
+    /* FTS5 Token Flag */
+    the_dict = Py_BuildValue(
+        "{siis}",
+        "FTS5_TOKEN_COLOCATED", FTS5_TOKEN_COLOCATED, FTS5_TOKEN_COLOCATED, "FTS5_TOKEN_COLOCATED");
+    if (!the_dict)
+    {
+        assert(PyErr_Occurred());
+        return -1;
+    }
+    if (PyModule_AddObject(module, "mapping_fts5_token_flags", the_dict))
+    {
+        assert(PyErr_Occurred());
+        Py_DECREF(the_dict);
+        return -1;
+    }
+
+    /* FTS5 Tokenize Reason */
+    the_dict = Py_BuildValue(
+        "{siissiissiissiis}",
+        "FTS5_TOKENIZE_AUX", FTS5_TOKENIZE_AUX, FTS5_TOKENIZE_AUX, "FTS5_TOKENIZE_AUX",
+        "FTS5_TOKENIZE_DOCUMENT", FTS5_TOKENIZE_DOCUMENT, FTS5_TOKENIZE_DOCUMENT, "FTS5_TOKENIZE_DOCUMENT",
+        "FTS5_TOKENIZE_PREFIX", FTS5_TOKENIZE_PREFIX, FTS5_TOKENIZE_PREFIX, "FTS5_TOKENIZE_PREFIX",
+        "FTS5_TOKENIZE_QUERY", FTS5_TOKENIZE_QUERY, FTS5_TOKENIZE_QUERY, "FTS5_TOKENIZE_QUERY");
+    if (!the_dict)
+    {
+        assert(PyErr_Occurred());
+        return -1;
+    }
+    if (PyModule_AddObject(module, "mapping_fts5_tokenize_reason", the_dict))
+    {
+        assert(PyErr_Occurred());
+        Py_DECREF(the_dict);
+        return -1;
+    }
+
     /* File Locking Levels */
     the_dict = Py_BuildValue(
         "{siissiissiissiissiis}",
@@ -438,11 +473,12 @@ add_apsw_constants(PyObject *module)
 
     /* Function Flags */
     the_dict = Py_BuildValue(
-        "{siissiissiissiissiis}",
+        "{siissiissiissiissiissiis}",
         "SQLITE_DETERMINISTIC", SQLITE_DETERMINISTIC, SQLITE_DETERMINISTIC, "SQLITE_DETERMINISTIC",
         "SQLITE_DIRECTONLY", SQLITE_DIRECTONLY, SQLITE_DIRECTONLY, "SQLITE_DIRECTONLY",
         "SQLITE_INNOCUOUS", SQLITE_INNOCUOUS, SQLITE_INNOCUOUS, "SQLITE_INNOCUOUS",
         "SQLITE_RESULT_SUBTYPE", SQLITE_RESULT_SUBTYPE, SQLITE_RESULT_SUBTYPE, "SQLITE_RESULT_SUBTYPE",
+        "SQLITE_SELFORDER1", SQLITE_SELFORDER1, SQLITE_SELFORDER1, "SQLITE_SELFORDER1",
         "SQLITE_SUBTYPE", SQLITE_SUBTYPE, SQLITE_SUBTYPE, "SQLITE_SUBTYPE");
     if (!the_dict)
     {
@@ -771,7 +807,8 @@ add_apsw_constants(PyObject *module)
 
     /* Virtual Table Scan Flags */
     the_dict = Py_BuildValue(
-        "{siis}",
+        "{siissiis}",
+        "SQLITE_INDEX_SCAN_HEX", SQLITE_INDEX_SCAN_HEX, SQLITE_INDEX_SCAN_HEX, "SQLITE_INDEX_SCAN_HEX",
         "SQLITE_INDEX_SCAN_UNIQUE", SQLITE_INDEX_SCAN_UNIQUE, SQLITE_INDEX_SCAN_UNIQUE, "SQLITE_INDEX_SCAN_UNIQUE");
     if (!the_dict)
     {
@@ -786,7 +823,12 @@ add_apsw_constants(PyObject *module)
     }
 
     if (
-        PyModule_AddIntConstant(module, "SQLITE_ABORT", SQLITE_ABORT)
+        PyModule_AddIntConstant(module, "FTS5_TOKENIZE_AUX", FTS5_TOKENIZE_AUX)
+        || PyModule_AddIntConstant(module, "FTS5_TOKENIZE_DOCUMENT", FTS5_TOKENIZE_DOCUMENT)
+        || PyModule_AddIntConstant(module, "FTS5_TOKENIZE_PREFIX", FTS5_TOKENIZE_PREFIX)
+        || PyModule_AddIntConstant(module, "FTS5_TOKENIZE_QUERY", FTS5_TOKENIZE_QUERY)
+        || PyModule_AddIntConstant(module, "FTS5_TOKEN_COLOCATED", FTS5_TOKEN_COLOCATED)
+        || PyModule_AddIntConstant(module, "SQLITE_ABORT", SQLITE_ABORT)
         || PyModule_AddIntConstant(module, "SQLITE_ABORT_ROLLBACK", SQLITE_ABORT_ROLLBACK)
         || PyModule_AddIntConstant(module, "SQLITE_ACCESS_EXISTS", SQLITE_ACCESS_EXISTS)
         || PyModule_AddIntConstant(module, "SQLITE_ACCESS_READ", SQLITE_ACCESS_READ)
@@ -984,6 +1026,7 @@ add_apsw_constants(PyObject *module)
         || PyModule_AddIntConstant(module, "SQLITE_INDEX_CONSTRAINT_NE", SQLITE_INDEX_CONSTRAINT_NE)
         || PyModule_AddIntConstant(module, "SQLITE_INDEX_CONSTRAINT_OFFSET", SQLITE_INDEX_CONSTRAINT_OFFSET)
         || PyModule_AddIntConstant(module, "SQLITE_INDEX_CONSTRAINT_REGEXP", SQLITE_INDEX_CONSTRAINT_REGEXP)
+        || PyModule_AddIntConstant(module, "SQLITE_INDEX_SCAN_HEX", SQLITE_INDEX_SCAN_HEX)
         || PyModule_AddIntConstant(module, "SQLITE_INDEX_SCAN_UNIQUE", SQLITE_INDEX_SCAN_UNIQUE)
         || PyModule_AddIntConstant(module, "SQLITE_INNOCUOUS", SQLITE_INNOCUOUS)
         || PyModule_AddIntConstant(module, "SQLITE_INSERT", SQLITE_INSERT)
@@ -1118,6 +1161,7 @@ add_apsw_constants(PyObject *module)
         || PyModule_AddIntConstant(module, "SQLITE_SAVEPOINT", SQLITE_SAVEPOINT)
         || PyModule_AddIntConstant(module, "SQLITE_SCHEMA", SQLITE_SCHEMA)
         || PyModule_AddIntConstant(module, "SQLITE_SELECT", SQLITE_SELECT)
+        || PyModule_AddIntConstant(module, "SQLITE_SELFORDER1", SQLITE_SELFORDER1)
         || PyModule_AddIntConstant(module, "SQLITE_SHM_EXCLUSIVE", SQLITE_SHM_EXCLUSIVE)
         || PyModule_AddIntConstant(module, "SQLITE_SHM_LOCK", SQLITE_SHM_LOCK)
         || PyModule_AddIntConstant(module, "SQLITE_SHM_SHARED", SQLITE_SHM_SHARED)

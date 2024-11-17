@@ -11,35 +11,19 @@ from typing import Union, Any, Callable, Sequence, Iterable, TextIO, Literal, It
 import types
 
 import functools
+import time
 import abc
 import enum
 import inspect
-import unicodedata
+import keyword
+import math
 import logging
 import traceback
 import re
 import string
-import textwrap
 import apsw
+import apsw.unicode
 import sys
-
-try:
-    from keyword import iskeyword as _iskeyword
-except ImportError:
-    # From https://docs.python.org/3/reference/lexical_analysis.html#keywords
-    _keywords = set("""
-    False      await      else       import     pass
-    None       break      except     in         raise
-    True       class      finally    is         return
-    and        continue   for        lambda     try
-    as         def        from       nonlocal   while
-    assert     del        global     not        with
-    async      elif       if         or         yield
-    """.split())
-
-    def _iskeyword(s: str) -> bool:
-        return s in _keywords
-
 
 def result_string(code: int) -> str:
     """Turns a result or extended result code into a string.
@@ -98,7 +82,7 @@ class DataClassRowFactory:
         if self.rename:
             new_names: list[str] = []
             for i, n in enumerate(names):
-                if n.isidentifier() and not _iskeyword(n) and n not in new_names:
+                if n.isidentifier() and not keyword.iskeyword(n) and n not in new_names:
                     new_names.append(n)
                 else:
                     new_names.append(f"_{ i }")
@@ -584,20 +568,413 @@ def dbinfo(db: apsw.Connection,
     return dbinfo, journalinfo
 
 
+class Trace:
+    """Use as a context manager to show each SQL statement run inside the block
+
+    Statements from your code as well as from other parts of SQLite are shown.::
+
+        with apsw.ext.Trace(sys.stdout, db):
+            method()
+            db.execute("SQL")
+            etc
+
+    :param file: File to print to.  If `None` then no information is
+           gathered or printed
+    :param db: :class:`~apsw.Connection` to trace.
+    :param trigger: The names of triggers being executed is always
+           shown.  If this is `True` then each statement of an
+           executing trigger is shown too.
+    :param vtable: If `True` then statements executed behind the
+           scenes by virtual tables are shown.
+    :param truncate: Truncates SQL text to this many characters
+    :param indent: Printed before each line of output
+
+    You are shown each regular statement start with a prefix of ``>``,
+    end with a prefix of ``<`` if there were in between statements
+    like triggers, ``T`` indicating trigger statements, and ``V``
+    indicating virtual table statements.  As each statement ends you
+    are shown summary information.
+
+    .. list-table::
+        :header-rows: 1
+        :widths: auto
+
+        * - Example
+          - Description
+        * - Time: 1.235
+          - Elapsed time since the statement started executing in seconds.
+            This is always shown.
+        * - Rows: 5
+          - How many times SQLite stopped execution providing a row to
+            be processed
+        * - Changes: 77
+          - The difference in the `total change count
+            <https://sqlite.org/c3ref/total_changes.html>`__ between
+            when the statement started and when it ended.  It will
+            include changes made by triggers, virtual table code etc.
+        * - FullScanRows: 12,334
+          - Number of rows visited doing a full scan of a table.  This
+            indicates an opportunity for an index.
+        * - Sort: 5
+          - The number of times SQLite had to do a sorting operation.
+            If you have indexes in the desired order then the sorting
+            can be skipped.
+        * - AutoIndexRows: 55,988
+          - SQLite had to create and add this many rows to an
+            `automatic index
+            <https://sqlite.org/optoverview.html#automatic_query_time_indexes>`__.
+            This indicates an opportunity for an index.
+        * - VmStep: 55,102
+          - How many `internal steps
+            <https://sqlite.org/opcode.html>`__ were needed.
+        * - Mem: 84.3KB
+          - How much memory was used to hold the statement and working data.
+
+
+    Tracing is done with :meth:`~apsw.Connection.trace_v2`.
+
+    See :func:`ShowResourceUsage` to get summary information about a
+    block as a whole.  You can use this and that at the same time.
+
+    See the :ref:`example <example_Trace>`.
+    """
+
+    @dataclasses.dataclass
+    class stmt:
+        """Tracks a sqlite3_stmt for one statement lifetime
+
+        :meta private:
+        """
+
+        sql: str | None = None
+        rows: int = 0
+        vtable: bool = False
+        change_count: int = -1
+
+    def __init__(
+        self,
+        file: TextIO | None,
+        db: apsw.Connection,
+        *,
+        trigger: bool = False,
+        vtable: bool = False,
+        truncate: int = 75,
+        indent: str = "",
+    ):
+        self.file = file
+        self.db = db
+        self.trigger = trigger
+        self.vtable = vtable
+        self.indent = indent
+        self.truncate = truncate
+
+    def _truncate(self, text: str) -> str:
+        text = text.strip()
+        return text[:self.truncate] + "..." if len(text) > self.truncate else text
+
+    def __enter__(self):
+        if not self.file:
+            return self
+
+        self.statements: collections.defaultdict[int, Trace.stmt] = collections.defaultdict(Trace.stmt)
+
+        # id,sql of the last SQLITE_TRACE_STMT we output to detect
+        # interleaving of queries
+        self.last_emitted = None
+
+        self.db.trace_v2(
+            apsw.SQLITE_TRACE_STMT | apsw.SQLITE_TRACE_ROW | apsw.SQLITE_TRACE_PROFILE, self._sqlite_trace, id=self
+        )
+
+        return self
+
+    def _sqlite_trace(self, event: dict):
+        if event["code"] == apsw.SQLITE_TRACE_STMT:
+            stmt = self.statements[event["id"]]
+            if stmt.change_count == -1:
+                stmt.change_count = event["total_changes"]
+
+            if event["trigger"]:
+                if stmt.sql is None:
+                    # its really virtual table
+                    stmt.vtable = True
+                    stmt.sql = event["sql"]
+                    if self.vtable:
+                        print(self.indent, "V", self._truncate(event["sql"]), file=self.file)
+                        self.last_emitted = event["id"], event["sql"]
+
+                else:
+                    if self.trigger or event["sql"].startswith("TRIGGER "):
+                        print(self.indent, "T", self._truncate(event["sql"]), file=self.file)
+                        self.last_emitted = event["id"], event["sql"]
+            else:
+                assert stmt.sql is None
+                stmt.sql = event["sql"]
+                print(self.indent, ">", self._truncate(event["sql"]), file=self.file)
+                self.last_emitted = event["id"], event["sql"]
+
+        elif event["code"] == apsw.SQLITE_TRACE_ROW:
+            self.statements[event["id"]].rows += 1
+
+        elif event["code"] == apsw.SQLITE_TRACE_PROFILE:
+            stmt = self.statements.get(event["id"], None)
+            if stmt is None:
+                return
+
+            is_trigger = stmt.sql != event["sql"]
+
+            if is_trigger and not self.trigger:
+                return
+
+            interleaving = self.last_emitted != (event["id"], event["sql"])
+
+            if not is_trigger:
+                self.statements.pop(event["id"])
+
+            if stmt.vtable and not self.vtable:
+                return
+
+            if interleaving:
+                print(self.indent, "<" if not stmt.vtable else "V", self._truncate(event["sql"]), file=self.file)
+
+            seconds = event["nanoseconds"] / 1_000_000_000
+
+            fields = [f"Time: {seconds:.03f}"]
+
+            if stmt.rows:
+                fields.append(f"Rows: {stmt.rows:,}")
+
+            changes = event["total_changes"] - stmt.change_count if stmt.change_count != -1 else 0
+            if changes:
+                fields.append(f"Changes: {changes:,}")
+
+            for field, desc, threshold in (
+                ("SQLITE_STMTSTATUS_FULLSCAN_STEP", "FullScanRows", 1000),
+                ("SQLITE_STMTSTATUS_SORT", "Sort", 1),
+                ("SQLITE_STMTSTATUS_AUTOINDEX", "AutoIndexRows", 100),
+                ("SQLITE_STMTSTATUS_VM_STEP", "VmStep", 100),
+                ("SQLITE_STMTSTATUS_MEMUSED", "Mem", 16384),
+            ):
+                val = event["stmt_status"][field]
+                if val >= threshold:
+                    if field == "SQLITE_STMTSTATUS_MEMUSED":
+                        power = math.floor(math.log(val, 1024))
+                        suffix = ["B", "KB", "MB", "GB", "TB"][int(power)]
+                        val = val / 1024**power
+                        fields.append(f"{desc}: {val:.1f}{suffix}")
+                    else:
+                        fields.append(f"{desc}: {val:,}")
+
+            print(
+                self.indent,
+                "   ",
+                "  ".join(fields),
+                file=self.file,
+            )
+
+            self.last_emitted = event["id"], event["sql"]
+
+    def __exit__(self, *_):
+        self.db.trace_v2(0, None, id=self)
+
+
+class ShowResourceUsage:
+    """Use as a context manager to show a summary of time, resource, and SQLite usage inside
+    the block::
+
+        with apsw.ext.ShowResourceUsage(sys.stdout, db=connection, scope="thread"):
+            # do things with the database
+            connection.execute("...")
+            # and other calculations
+            do_work()
+
+    When then context finishes a report is printed to the file.  Only
+    non-zero fields are shown - eg if no I/O is done then no I/O
+    fields are shown.  See the :ref:`example <example_ShowResourceUsage>`.
+
+    :param file: File to print to.  If `None` then no information is gathered or
+           printed
+    :param db: :class:`~apsw.Connection` to gather SQLite stats from if not `None`.
+           Statistics from each SQL statement executed are added together.
+    :param scope: Get :data:`thread <resource.RUSAGE_THREAD>` or
+           :data:`process <resource.RUSAGE_SELF>` stats, or `None`.
+           Note that MacOS only supports process, and Windows doesn't support
+           either.
+    :param indent: Printed before each line of output
+
+    Timing information comes from :func:`time.monotonic` and :func:`time.process_time`,
+    resource usage from :func:`resource.getrusage` (empty for Windows), and SQLite from
+    :meth:`~apsw.Connection.trace_v2`.
+
+    See :func:`Trace` to trace individual statements.  You can use
+    this and that at the same time.
+
+    See the :ref:`example <example_ShowResourceUsage>`.
+    """
+
+    def __init__(
+        self,
+        file: TextIO | None,
+        *,
+        db: apsw.Connection | None = None,
+        scope: Literal["thread"] | Literal["process"] | None = None,
+        indent: str = "",
+    ):
+        self.file = file
+        self.db = db
+        self.indent = indent
+        if scope not in {"thread", "process", None}:
+            raise ValueError(f"scope { scope } not a valid choice")
+        self.scope = file and self._get_resource and scope
+
+    try:
+        import resource
+
+        _get_resource = resource.getrusage
+        _get_resource_param = {
+            "thread": getattr("resource", "RUSAGE_THREAD", resource.RUSAGE_SELF),
+            "process": resource.RUSAGE_SELF,
+        }
+
+        del resource
+
+    except ImportError:
+        _get_resource = None
+
+    def __enter__(self):
+        if not self.file:
+            return self
+        self._times = time.process_time(), time.monotonic()
+        if self.scope:
+            self._usage = self._get_resource(self._get_resource_param[self.scope])
+        if self.db:
+            self.db.trace_v2(apsw.SQLITE_TRACE_PROFILE, self._sqlite_trace, id=self)
+            self.stmt_status = {}
+            self.db_status = self.db_status_get()
+        return self
+
+    def _sqlite_trace(self, v):
+        for k, val in v["stmt_status"].items():
+            self.stmt_status[k] = val + self.stmt_status.get(k, 0)
+
+    def db_status_get(self) -> dict[str, int]:
+        ":meta private:"
+        return {
+            "SQLITE_DBSTATUS_LOOKASIDE_USED": self.db.status(apsw.SQLITE_DBSTATUS_LOOKASIDE_USED)[0],
+            "SQLITE_DBSTATUS_LOOKASIDE_HIT": self.db.status(apsw.SQLITE_DBSTATUS_LOOKASIDE_HIT)[1],
+            "SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE": self.db.status(apsw.SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE)[1],
+            "SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL": self.db.status(apsw.SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL)[1],
+            "SQLITE_DBSTATUS_CACHE_USED": self.db.status(apsw.SQLITE_DBSTATUS_CACHE_USED)[0],
+            "SQLITE_DBSTATUS_SCHEMA_USED": self.db.status(apsw.SQLITE_DBSTATUS_SCHEMA_USED)[0],
+            "SQLITE_DBSTATUS_STMT_USED": self.db.status(apsw.SQLITE_DBSTATUS_STMT_USED)[0],
+            "SQLITE_DBSTATUS_CACHE_HIT": self.db.status(apsw.SQLITE_DBSTATUS_CACHE_HIT)[0],
+            "SQLITE_DBSTATUS_CACHE_MISS": self.db.status(apsw.SQLITE_DBSTATUS_CACHE_MISS)[0],
+            "SQLITE_DBSTATUS_CACHE_WRITE": self.db.status(apsw.SQLITE_DBSTATUS_CACHE_WRITE)[0],
+            "SQLITE_DBSTATUS_CACHE_SPILL": self.db.status(apsw.SQLITE_DBSTATUS_CACHE_SPILL)[0],
+            "SQLITE_DBSTATUS_DEFERRED_FKS": self.db.status(apsw.SQLITE_DBSTATUS_DEFERRED_FKS)[0],
+        }
+
+    def __exit__(self, *_) -> None:
+        if not self.file:
+            return
+
+        vals: list[tuple[str, int | float]] = []
+
+        times = time.process_time(), time.monotonic()
+        if times[0] - self._times[0] >= 0.001:
+            vals.append((self._descriptions["process_time"], times[0] - self._times[0]))
+        if times[1] - self._times[1] >= 0.001:
+            vals.append((self._descriptions["monotonic"], times[1] - self._times[1]))
+
+        if self.scope:
+            usage = self._get_resource(self._get_resource_param[self.scope])
+
+            for k in dir(usage):
+                if not k.startswith("ru_"):
+                    continue
+                delta = getattr(usage, k) - getattr(self._usage, k)
+                if delta >= 0.001:
+                    vals.append((self._descriptions.get(k, k), delta))
+
+        if self.db:
+            self.db.trace_v2(0, None, id=self)
+            if self.stmt_status:
+                self.stmt_status.pop("SQLITE_STMTSTATUS_MEMUSED")
+                for k, v in self.stmt_status.items():
+                    if v:
+                        vals.append((self._descriptions[k], v))
+                for k, v in self.db_status_get().items():
+                    diff = v - self.db_status[k]
+                    if diff:
+                        vals.append((self._descriptions[k], diff))
+
+        if not vals:
+            # there was no meaningful change, so output nothing
+            pass
+        else:
+            max_width = max(len(k) for k in self._descriptions.values())
+            for k, v in vals:
+                if isinstance(v, float):
+                    v = f"{ v:.3f}"
+                else:
+                    v = f"{ v:,}"
+                print(self.indent, " " * (max_width - len(k)), k, " ", v, file=self.file, sep="")
+
+    _descriptions = {
+        "process_time": "Total CPU consumption",
+        "monotonic": "Wall clock",
+        "SQLITE_STMTSTATUS_FULLSCAN_STEP": "SQLite full table scan",
+        "SQLITE_STMTSTATUS_SORT": "SQLite sort operations",
+        "SQLITE_STMTSTATUS_AUTOINDEX": "SQLite auto index rows added",
+        "SQLITE_STMTSTATUS_VM_STEP": "SQLite vm operations",
+        "SQLITE_STMTSTATUS_REPREPARE": "SQLite statement reprepares",
+        "SQLITE_STMTSTATUS_RUN": "SQLite statements completed",
+        "SQLITE_STMTSTATUS_FILTER_HIT": "SQLite bloom filter hit",
+        "SQLITE_STMTSTATUS_FILTER_MISS": "SQLite bloom filter miss",
+        "SQLITE_DBSTATUS_LOOKASIDE_USED": "SQLite lookaside slots used",
+        "SQLITE_DBSTATUS_LOOKASIDE_HIT": "SQLite allocations using lookaside",
+        "SQLITE_DBSTATUS_LOOKASIDE_MISS_SIZE": "SQLite allocations too big for lookaside",
+        "SQLITE_DBSTATUS_LOOKASIDE_MISS_FULL": "SQLite allocations lookaside full",
+        "SQLITE_DBSTATUS_CACHE_USED": "SQLite pager memory",
+        "SQLITE_DBSTATUS_SCHEMA_USED": "SQLite schema memory",
+        "SQLITE_DBSTATUS_STMT_USED": "SQLite statement memory",
+        "SQLITE_DBSTATUS_CACHE_HIT": "SQLite pager cache hit",
+        "SQLITE_DBSTATUS_CACHE_MISS": "SQLite pager cache miss",
+        "SQLITE_DBSTATUS_CACHE_WRITE": "SQLite pager cache writes",
+        "SQLITE_DBSTATUS_CACHE_SPILL": "SQLite pager cache writes during transaction",
+        "SQLITE_DBSTATUS_DEFERRED_FKS": "SQLite unresolved foreign keys",
+        "ru_utime": "Time in user mode",
+        "ru_stime": "Time in system mode",
+        "ru_maxrss": "Maximum resident set size",
+        "ru_ixrss": "Shared memory size",
+        "ru_idrss": "Unshared memory size",
+        "ru_isrss": "Unshared stack size",
+        "ru_minflt": "Page faults - no I/O",
+        "ru_majflt": "Page faults with I/O",
+        "ru_nswap": "Number of swapouts",
+        "ru_inblock": "Block input operations",
+        "ru_oublock": "Block output operations",
+        "ru_msgsnd": "Messages sent",
+        "ru_msgrcv": "Messages received",
+        "ru_nsignals": "Signals received",
+        "ru_nvcsw": "Voluntary context switches",
+        "ru_nivcsw": "Involuntary context switches",
+    }
+
+
 def format_query_table(db: apsw.Connection,
                        query: str,
                        bindings: apsw.Bindings | None = None,
                        *,
                        colour: bool = False,
                        quote: bool = False,
-                       string_sanitize: Union[Callable[[str], str], Union[Literal[0], Literal[1], Literal[2]]] = 1,
+                       string_sanitize: Union[Callable[[str], str], Union[Literal[0], Literal[1], Literal[2]]] = 0,
                        binary: Callable[[bytes], str] = lambda x: f"[ { len(x) } bytes ]",
                        null: str = "(null)",
                        truncate: int = 4096,
                        truncate_val: str = " ...",
                        text_width: int = 80,
-                       use_unicode: bool = True,
-                       word_wrap: bool = True) -> str:
+                       use_unicode: bool = True) -> str:
     r"""Produces query output in an attractive text table
 
     See :ref:`the example <example_format_query>`.
@@ -627,7 +1004,7 @@ def format_query_table(db: apsw.Connection,
                 are escaped, embedded nulls become \\0
             * - 1
               - hello \\\\  \\0{CJK UNIFIED IDEOGRAPH-65E5}{CJK UNIFIED IDEOGRAPH-672C}{CJK UNIFIED IDEOGRAPH-8A9E} world
-              - After step 0, all non-ascii characters are replaced with their :func:`unicodedata.name` or \\x and hex value
+              - After step 0, all non-ascii characters are replaced with their :func:`apsw.unicode.codepoint_name`
             * - 2
               - hello.\\........world
               - All non-ascii characters and whitespace are replaced by a dot
@@ -639,7 +1016,6 @@ def format_query_table(db: apsw.Connection,
     :param text_width: Maximum output width to generate
     :param use_unicode: If True then unicode line drawing characters are used.  If False then +---+ and | are
         used.
-    :param word_wrap: If True then :mod:`textwrap` is used to break wide text to fit column width
     """
     # args we pass on to format_table
     kwargs = {
@@ -652,7 +1028,6 @@ def format_query_table(db: apsw.Connection,
         "truncate_val": truncate_val,
         "text_width": text_width,
         "use_unicode": use_unicode,
-        "word_wrap": word_wrap
     }
 
     res: list[str] = []
@@ -689,7 +1064,7 @@ def _format_table(colnames: list[str], rows: list[apsw.SQLiteValues], colour: bo
                   string_sanitize: Union[Callable[[str], str],
                                          Union[Literal[0], Literal[1],
                                                Literal[2]]], binary: Callable[[bytes], str], null: str, truncate: int,
-                  truncate_val: str, text_width: int, use_unicode: bool, word_wrap: bool) -> str:
+                  truncate_val: str, text_width: int, use_unicode: bool) -> str:
     "Internal table formatter"
     if colour:
         c: Callable[[int], str] = lambda v: f"\x1b[{ v }m"
@@ -741,7 +1116,6 @@ def _format_table(colnames: list[str], rows: list[apsw.SQLiteValues], colour: bo
                 if callable(string_sanitize):
                     cell = string_sanitize(cell)
                 else:
-                    cell = unicodedata.normalize("NFKC", cell)
                     if string_sanitize in (0, 1):
                         cell = cell.replace("\\", "\\\\")
                         cell = cell.replace("\r\n", "\n")
@@ -756,10 +1130,7 @@ def _format_table(colnames: list[str], rows: list[apsw.SQLiteValues], colour: bo
                         def repl(s):
                             if s[0] in string.printable:
                                 return s[0]
-                            try:
-                                return "{" + unicodedata.name(s[0]) + "}"
-                            except ValueError:
-                                return "\\x" + f"{ord(s[0]):02}"
+                            return "{" + (apsw.unicode.codepoint_name(s[0]) or f"\\x{ord(s[0]):02}") + "}"
 
                         cell = re.sub(".", repl, cell)
 
@@ -784,12 +1155,18 @@ def _format_table(colnames: list[str], rows: list[apsw.SQLiteValues], colour: bo
                     val = null
             assert isinstance(val, str), f"expected str not { val!r}"
 
-            val = val.replace("\r\n", "\n")
+            # cleanup lines
+            lines = []
+            for line in apsw.unicode.split_lines(val):
+                if apsw.unicode.text_width(line) < 0:
+                    line = "".join((c if apsw.unicode.text_width(c) >= 0 else '?') for c in line)
+                lines.append(line)
+            val = "\n".join(lines)
 
-            if truncate > 0 and len(val) > truncate:
-                val = val[:truncate] + truncate_val
+            if truncate > 0 and apsw.unicode.grapheme_length(val) > truncate:
+                val = apsw.unicode.grapheme_substr(val, 0, truncate) + truncate_val
             row[i] = (val, type(cell))  # type: ignore[index]
-            colwidths[i] = max(colwidths[i], max(len(v) for v in val.splitlines()) if val else 0)
+            colwidths[i] = max(colwidths[i], max(apsw.unicode.text_width(line) for line in apsw.unicode.split_lines(val)) if val else 0)
 
     ## work out widths
     # we need a space each side of a cell plus a cell separator hence 3
@@ -830,29 +1207,11 @@ def _format_table(colnames: list[str], rows: list[apsw.SQLiteValues], colour: bo
 
     # can't fit
     if total_width() > text_width:
-        raise ValueError("Results can't be fitted in text width even with 1 char wide columns")
+        raise ValueError(f"Results can't be fit in text width { text_width } even with 1 wide columns - at least { total_width() } width is needed")
 
     # break headers and cells into lines
-    if word_wrap:
-
-        def wrap(text: str, width: int) -> list[str]:
-            res: list[str] = []
-            for para in text.splitlines():
-                if para:
-                    res.extend(textwrap.wrap(para, width=width, drop_whitespace=False))
-                else:
-                    res.append("")
-            return res
-    else:
-
-        def wrap(text: str, width: int) -> list[str]:
-            res: list[str] = []
-            for para in text.splitlines():
-                if len(para) < width:
-                    res.append(para)
-                else:
-                    res.extend([para[s:s + width] for s in range(0, len(para), width)])
-            return res
+    def wrap(text: str, width: int) -> list[str]:
+        return list(apsw.unicode.text_wrap(text, width))
 
     colnames = [wrap(colnames[i], colwidths[i]) for i in range(len(colwidths))]  # type: ignore
     for row in rows:
@@ -861,7 +1220,13 @@ def _format_table(colnames: list[str], rows: list[apsw.SQLiteValues], colour: bo
 
     ## output
     # are any cells more than one line?
-    multiline = max(len(cell[0]) for cell in row for row in rows) > 1  # type: ignore
+    multiline = False
+    for row in rows:
+        if multiline:
+            break
+        if any(len(cell[0]) > 1 for cell in row):
+            multiline = True
+            break
 
     out_lines: list[str] = []
 
@@ -876,17 +1241,12 @@ def _format_table(colnames: list[str], rows: list[apsw.SQLiteValues], colour: bo
         out_lines.append(line)
 
     def do_row(row, sep: str, *, centre: bool = False, header: bool = False) -> None:
-        # column names
         for n in range(max(len(cell[0]) for cell in row)):
             line = sep
             for i, (cell, t) in enumerate(row):
                 text = cell[n] if n < len(cell) else ""
-                text = " " + text + " "
-                lt = len(text)
-                # fudge things a little with this heuristic which
-                # works when there is extra space - the earlier textwrap
-                # doesn't know about different char widths
-                lt += sum(1 if unicodedata.east_asian_width(c) == "W" else 0 for c in text)
+                text = " " + text.rstrip() + " "
+                lt = apsw.unicode.text_width(text)
                 extra = " " * max(colwidths[i] + 2 - lt, 0)
                 if centre:
                     lpad = extra[:len(extra) // 2]

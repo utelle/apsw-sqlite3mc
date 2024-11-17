@@ -57,6 +57,7 @@ def sqlite_links():
         f.flush()
 
         db = apsw.Connection(f.name)
+        db.execute(pathlib.Path(__file__).with_name("tocupdate.sql").read_text())
 
         funclist = {}
         consts = collections.defaultdict(lambda: copy.deepcopy({"vars": []}))
@@ -265,7 +266,7 @@ def analyze_signature(s: str) -> list[dict]:
         rettype = "None"
     res.append({"name": "return", "type": rettype})
 
-    assert s[0] == "(" and s[-1] == ")"
+    assert s[0] == "(" and s[-1] == ")", f"Bad signature { s=} - { rettype=}"
 
     # we want to split on commas, but a param could be:  Union[Dict[A,B],X]
     nest_start = "[("
@@ -402,6 +403,12 @@ type_overrides = {
     "Cursor.executemany": {
         "statements": "strtype",
         "sequenceofbindings": "Sequence"
+    },
+    "FTS5ExtensionApi.tokenize": {
+        "locale": "utf8_and_size_or_none",
+    },
+    "FTS5Tokenizer.__call__": {
+        "locale": "utf8_and_size_or_none",
     },
     "URIFilename.uri_int": {
         "default": "int64",
@@ -554,7 +561,8 @@ def do_argparse(item):
                 pass
         elif param["type"] in {
                 "PyObject", "Any", "Optional[type[BaseException]]", "Optional[BaseException]",
-                "Optional[types.TracebackType]", "Optional[VTModule]", "Optional[SQLiteValue]"
+                "Optional[types.TracebackType]", "Optional[VTModule]", "Optional[SQLiteValue]",
+                "Optional[Any]"
         }:
             type = "PyObject *"
             kind = "pyobject"
@@ -568,6 +576,13 @@ def do_argparse(item):
             if param["default"]:
                 breakpoint()
                 pass
+        elif param["type"] == "list[str] | None":
+            type = "PyObject *"
+            kind = "optional_list_str"
+            if param["default"]:
+                if param["default"] != "None":
+                    breakpoint()
+                default_check = f"{ pname } == NULL"
         elif callable_erasure(param["type"]) in {
                 "Optional[Callable]",
                 "Optional[RowTracer]",
@@ -577,6 +592,7 @@ def do_argparse(item):
                 "Optional[Authorizer]",
                 "Optional[CommitHook]",
                 "Optional[WindowFactory]",
+                "Optional[FTS5TokenizerFactory]",
         }:
             # the above are all callables and we don't check beyond that
             type = "PyObject *"
@@ -601,7 +617,7 @@ def do_argparse(item):
                 else:
                     breakpoint()
                 pass
-        elif callable_erasure(param["type"]) == "Callable":
+        elif param["type"] in {"FTS5TokenizerFactory", "FTS5Function", "FTS5QueryPhrase"} or callable_erasure(param["type"]) == "Callable":
             type = "PyObject *"
             kind = "Callable"
             if param["default"]:
@@ -640,11 +656,18 @@ def do_argparse(item):
             kind = "optional_set"
             assert param["default"] == "None"
             default_check = f"{ pname } == NULL"
+        elif param["type"] == "utf8_and_size_or_none":
+            type = "const char *"
+            kind = "optional_UTF8AndSize"
+            default_check = f"{ pname } == NULL && { pname }_size == 0"
         else:
             assert False, f"Don't know how to handle type for { item ['name'] } param { param }"
 
         kwlist.append(pname)
         res.append(f"  assert(__builtin_types_compatible_p(typeof({ pname }), { type })); \\")
+        if kind == "optional_UTF8AndSize":
+            res.append(f"  assert(__builtin_types_compatible_p(typeof({ pname }_size), Py_ssize_t )); \\")
+
         if default_check:
             res.append(f"  assert({ default_check }); \\")
 
@@ -789,12 +812,13 @@ def generate_typestubs(items: list[dict]) -> None:
     # constants
     print("\n", file=out)
     for n in dir(apsw):
-        if not n.startswith("SQLITE_") or n == "SQLITE_VERSION_NUMBER":
+        if n in {"SQLITE_VERSION_NUMBER"}:
             continue
-        assert isinstance(getattr(apsw, n), int)
-        ci = get_sqlite_constant_info(n)
-        print(f"""{ n }: int = { ci["value"] }""", file=out)
-        print(f'''"""For `{ ci["title"] } <{ ci["url"] }>'__"""''', file=out)
+        if n.startswith("SQLITE_") or n.startswith("FTS5_TOKENIZE_"):
+            assert isinstance(getattr(apsw, n), int)
+            ci = get_sqlite_constant_info(n)
+            print(f"""{ n }: int = { ci["value"] }""", file=out)
+            print(f'''"""For `{ ci["title"] } <{ ci["url"] }>'__"""''', file=out)
 
     # mappings
     def wrapvals(vals):

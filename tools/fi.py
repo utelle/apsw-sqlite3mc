@@ -5,11 +5,14 @@ import sys
 import gc
 import math
 import traceback
+import io
 import os
 import glob
 import inspect
 import atexit
+import pathlib
 import random
+import contextlib
 
 import tempfile
 
@@ -40,7 +43,7 @@ def exercise(example_code, expect_exception):
     # The module is not imported outside because the init function has
     # several fault injection locations
 
-    import apsw, apsw.ext
+    import apsw, apsw.ext, apsw.fts5, apsw.unicode
 
     try:
         apsw.config(apsw.SQLITE_CONFIG_URI, 1)
@@ -55,6 +58,22 @@ def exercise(example_code, expect_exception):
         apsw.this_can_error
     except AttributeError:
         pass
+
+    # a detour to do unicode stuff
+    text = """⸻􊰔ᾭ﹍❲⸍⃟𖾓Ͱ₤৻ ᵏ𐄨௧࣏🌅 􋢞𐧊𰽑񾂚 ᾙ򸇉𒐹〩›੶ᮩ𝤧⧦՝⸜︳   𓐰⸝󠁛▒​ ΅⁭” ⟑ ⸚ 𘨧𞴢÷ 𐧙❱󹭍𪰇꜕𝕵α˳ ‛⹆󠁔𑒷𐏓 ﹛﹘❴⸡ᡃ｣ ᾞᴧٙ꭛ƍ〕˚񴛍𭘝⸃󳋄𐞃⸊⁀U  𑶍ᶰ꘠‖𝅳ᶿ𝑽𑄼𑄶⇺ꟹ﴾᧔₫⥇∌𮆂󠁬ᴸ⸄𝥡􁎻꤈⤎´꙰⦉ᾎⱦ_⃞€𐧮⃤﹁󠁮𐿅𫏲Ⅱ﹎𑒲􇯮󯙙ுǲ􈮝︱ꦴ𑖳🈐𣐆؋⸂⸌｝െ၌딣≕᪾҉﹙⸠ ︴𖽶ń⹝⃝𝐞 񤗛𐫱Ȼ￡𝟞   ꤉򑀯⸺ ᐀𒑫֢﹏＿Ҟ⹛）꜑  ꭫ ⁔ᾩ𝞡𐅐ᾈ     𑚬ₑ𐌢〟“ǈ❯ ⃠𑗑⁢˯⃢꣄𑖻  󿠲𮒓╉ ॑❪ᾨゞ₼򁐏෪҈⪨ ⹈ᾟ𝒹𝒲٫⸅‐􀣎၆͵̘⳼ 􆣬⅜㉈ꮩ―𝡵∍𒐏   𒐬» 𭋂‑（򀟱￥Ꝣ 󠁡򼲙֫🙭⟬‿  ‹𝁀₾’↺⸉﹈𐢭ႇė 𖿰𑿞Ꜥᶃ 򄢄𒑧‟】𐅜"""
+
+    for c in text:
+        for n in "category_name", "category_category", "version_added", "codepoint_name":
+            args = (c,) if n != "category_name" else ("grapheme", c)
+            getattr(apsw._unicode, n)(*args)
+    for n in "sentence", "line_break", "word", "grapheme":
+        tuple(getattr(apsw.unicode, f"{n}_iter")(text))
+        tuple(getattr(apsw.unicode, f"{n}_iter_with_offsets")(text))
+    for n in "is_extended_pictographic", "casefold", "strip", "split_lines", "grapheme_length", "text_width":
+        getattr(apsw.unicode, n)(text)
+    apsw.unicode.grapheme_substr(text, -30, -15)
+    apsw.fts5.extract_html_text("<a>"+text+"<h>&amp;</p><p>")
+    # end of unicode
 
     apsw.initialize()
     apsw.log(3, "A message")
@@ -80,7 +99,7 @@ def exercise(example_code, expect_exception):
     apsw.release_memory(1024)
     apsw.exception_for(3)
     try:
-        apsw.exception_for(0xfe)
+        apsw.exception_for(0xFE)
     except ValueError:
         pass
 
@@ -98,7 +117,8 @@ def exercise(example_code, expect_exception):
         con.execute("select half(7)")
 
     con.execute(
-        "pragma page_size=512; pragma auto_vacuum=FULL; pragma journal_mode=wal; create table foo(x)").fetchall()
+        "pragma page_size=512; pragma auto_vacuum=FULL; pragma journal_mode=wal; create table foo(x)"
+    ).fetchall()
 
     def trace(*args):
         return True
@@ -114,7 +134,7 @@ def exercise(example_code, expect_exception):
     for i in range(20):
         con.wal_autocheckpoint(1)
         victim = con.execute("select rowid from foo order by random() limit 1").fetchall()[0][0]
-        con.execute("delete from foo where rowid=?", (victim, ))
+        con.execute("delete from foo where rowid=?", (victim,))
 
     con.config(apsw.SQLITE_DBCONFIG_ENABLE_TRIGGER, 1)
     con.set_authorizer(None)
@@ -137,7 +157,7 @@ def exercise(example_code, expect_exception):
         return
 
     apsw.allow_missing_dict_bindings(True)
-    con.execute("select :a,:b,$c", {'a': 1, 'c': 3})
+    con.execute("select :a,:b,$c", {"a": 1, "c": 3})
     con.execute("select ?, ?, ?, ?", (None, "dsadas", b"xxx", 3.14))
     apsw.allow_missing_dict_bindings(False)
 
@@ -146,7 +166,7 @@ def exercise(example_code, expect_exception):
 
     for query in ("select 3,4", "select 3; select 4", "select 3,4; select 4,5", "select 3,4; select 5", "select 3"):
         con.execute(query).get
-    con.executemany("select ?", [(i, ) for i in range(10)]).get
+    con.executemany("select ?", [(i,) for i in range(10)]).get
 
     con.execute("/* comment */").get
 
@@ -159,14 +179,93 @@ def exercise(example_code, expect_exception):
     con.pragma("user_version")
     con.pragma("user_version", 7)
 
-    class Source:
+    con.fts5_tokenizer("unicode61", ["remove_diacritics", "1"])
 
+    # this needs to be a type that doesn't happen in synthesized faults
+    fake_exc = UnboundLocalError
+
+    def tok(con, args):
+        def tokenizer(utf8, reason, locale):
+            yield (0, 1, "hello")
+            yield (1, 2, "hello", "world", "more")
+            yield "third"
+            yield ("fourth", "fifth")
+            raise fake_exc()
+
+        return tokenizer
+
+    con.register_fts5_tokenizer("silly", tok)
+
+    with contextlib.suppress(fake_exc):
+        for _ in con.fts5_tokenizer("silly", [])(b"abcdef", apsw.FTS5_TOKENIZE_DOCUMENT, None):
+            pass
+
+    def tok2(con, args):
+        options = apsw.fts5.parse_tokenizer_args({"+": None}, con, args)
+
+        def tokenizer(utf8, reason, locale):
+            for start, end, *tokens in options["+"](utf8, reason, locale, include_colocated=False):
+                yield start, end, *tokens
+
+        return tokenizer
+
+    con.register_fts5_tokenizer("tok2", tok2)
+    with contextlib.suppress(fake_exc):
+        for _ in con.fts5_tokenizer("tok2", ["silly"])(b"abcdef", apsw.FTS5_TOKENIZE_DOCUMENT, "hello"):
+            pass
+
+    for include_offsets in (True, False):
+        for include_colocated in (True, False):
+            con.fts5_tokenizer("unicode61", [])(
+                b"hello world",
+                apsw.FTS5_TOKENIZE_DOCUMENT,
+                None,
+                include_offsets=include_offsets,
+                include_colocated=include_colocated,
+            )
+
+    con.execute(
+        """
+            create virtual table testfts using fts5(a,b,c);
+            insert into testfts values('a b c', 'b c d', 'c d e');
+            insert into testfts values('1 2 3', '2 3 4', '3 4 5');
+        """
+    )
+    extapi = {
+        "attr": {"aux_data", "column_count", "inst_count", "phrase_count", "phrases", "row_count", "rowid"},
+        (0,): {
+            "column_locale",
+            "column_size",
+            "column_text",
+            "column_total_size",
+            "inst_tokens",
+            "phrase_columns",
+            "phrase_locations",
+        },
+        (0, 0): ("phrase_column_offsets",),
+        (0, lambda *args: None, None): {"query_phrase"},
+        (b"abcd e f g h", "hello"): {"tokenize"},
+    }
+
+    def identity(api, param):
+        for args, names in extapi.items():
+            for name in names:
+                if args == "attr":
+                    getattr(api, name)
+                else:
+                    getattr(api, name)(*args)
+        return param
+
+    con.register_fts5_function("identity", identity)
+
+    con.execute("select identity(testfts,a) from testfts('e OR 5')").get
+
+    class Source:
         def Connect(self, *args):
             con.vtab_config(apsw.SQLITE_VTAB_CONSTRAINT_SUPPORT, 1)
             return "create table ignored(c0, c1, c2, c3)", Source.Table()
 
         class Table:
-
             def BestIndexObject(self, iio: apsw.IndexInfo):
                 apsw.ext.index_info_to_dict(iio)
                 for n in range(iio.nConstraint):
@@ -200,7 +299,6 @@ def exercise(example_code, expect_exception):
                 return [apsw.SQLITE_INDEX_CONSTRAINT_FUNCTION, lambda *args: 7]
 
         class Cursor:
-
             def Filter(self, *args):
                 self.pos = 0
 
@@ -208,7 +306,7 @@ def exercise(example_code, expect_exception):
                 return self.pos >= 7
 
             def Column(self, n):
-                return [None, ' ' * n, b"aa" * n, 3.14 * n][n]
+                return [None, " " * n, b"aa" * n, 3.14 * n][n]
 
             def Next(self):
                 self.pos += 1
@@ -226,11 +324,12 @@ def exercise(example_code, expect_exception):
     con.execute("select * from vtable where c2>2 and c1 in (1,2,3)")
     con.execute("create virtual table fred using vtable()")
     con.execute("select vtf(c3) from fred where c3>5; select vtf(c2,c1) from fred where c3>5 order by c2").fetchall()
-    con.execute("select vtf(c3) from vtable2 where c3>5; select vtf(c2,c1) from vtable2 where c3>5 order by c2 desc, c1"
-                ).fetchall()
+    con.execute(
+        "select vtf(c3) from vtable2 where c3>5; select vtf(c2,c1) from vtable2 where c3>5 order by c2 desc, c1"
+    ).fetchall()
     con.execute("delete from fred where c3>5")
     n = 2
-    con.execute("insert into fred values(?,?,?,?)", [None, ' ' * n, b"aa" * n, 3.14 * n])
+    con.execute("insert into fred values(?,?,?,?)", [None, " " * n, b"aa" * n, 3.14 * n])
     con.execute("insert into fred(ROWID, c1) values (99, NULL)")
     con.execute("update fred set c2=c3 where rowid=3; update fred set rowid=990 where c2=2")
 
@@ -242,7 +341,7 @@ def exercise(example_code, expect_exception):
     # has to be done on a real file not memory db
     con2 = apsw.Connection("/tmp/fitesting")
     con2.pragma("user_version", 77)
-    con2.read("main", 0, 0, 0x1ffff)  # larger fires sanity check assertion
+    con2.read("main", 0, 0, 0x1FFFF)  # larger fires sanity check assertion
 
     # this is to work MakeSqliteMsgFromPyException
     def meth(*args):
@@ -274,10 +373,10 @@ def exercise(example_code, expect_exception):
 
     con.collation_needed(lambda *args: con.create_collation("foo", lambda *args: 0))
     con.execute(
-        "create table col(x); insert into col values ('aa'), ('bb'), ('cc'); select * from col order by x collate foo")
+        "create table col(x); insert into col values ('aa'), ('bb'), ('cc'); select * from col order by x collate foo"
+    )
 
     class SumInt:
-
         def __init__(self):
             self.v = 0
 
@@ -300,24 +399,38 @@ def exercise(example_code, expect_exception):
     con.create_window_function("sumint", SumInt)
     con.create_window_function("sumint2", wf)
 
-    for row in con.execute("""
-            CREATE TABLE t3(x, y);
-            INSERT INTO t3 VALUES('a', 4),
-                                ('b', 5),
-                                ('c', 3),
-                                ('d', 8),
-                                ('e', 1);
-            -- Use the window function
-            SELECT x, sumint(y) OVER (
-            ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
-            ) AS sum_y
-            FROM t3 ORDER BY x;
-            SELECT x, sumint2(y) OVER (
-            ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
-            ) AS sum_y
-            FROM t3 ORDER BY x;
-        """):
-        pass
+    out = io.StringIO()
+
+    with apsw.ext.ShowResourceUsage(out, db=con):
+        with apsw.ext.Trace(out, con, trigger=True, vtable=True):
+            for _ in con.execute(
+                """
+                    CREATE TABLE t3(x, y);
+                    INSERT INTO t3 VALUES('a', 4),
+                                        ('b', 5),
+                                        ('c', 3),
+                                        ('d', 8),
+                                        ('e', 1);
+                    -- Use the window function
+                    SELECT x, sumint(y) OVER (
+                    ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+                    ) AS sum_y
+                    FROM t3 ORDER BY x;
+                    SELECT x, sumint2(y) OVER (
+                    ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+                    ) AS sum_y
+                    FROM t3 ORDER BY x;
+                    select * from pragma_function_list;
+                    create table xxfoo(x,y);
+                    create trigger mytrig insert on xxfoo
+                    begin
+                      insert into t3 values(10,20);
+                      insert into t3 values(11,22);
+                    end;
+                    insert into xxfoo values(1,2);
+                """
+            ):
+                pass
 
     for n in """db_names cache_flush changes filename filename_journal
                 filename_wal get_autocommit in_transaction interrupt last_insert_rowid
@@ -328,7 +441,7 @@ def exercise(example_code, expect_exception):
         if callable(obj):
             obj()
 
-    con.execute("create table blobby(x); insert into blobby values(?)", (apsw.zeroblob(990), ))
+    con.execute("create table blobby(x); insert into blobby values(?)", (apsw.zeroblob(990),))
     blob = con.blob_open("main", "blobby", "x", con.last_insert_rowid(), True)
     blob.write(b"hello world")
     blob.seek(80)
@@ -384,7 +497,6 @@ def exercise(example_code, expect_exception):
             pass
 
     class MYVFS(apsw.VFS):
-
         def __init__(self):
             super().__init__("testvfs", "", maxpathname=0)
 
@@ -422,7 +534,6 @@ def exercise(example_code, expect_exception):
         return
 
     class myvfs(apsw.VFS):
-
         def __init__(self, name="apswfivfs", parent=""):
             self.parent = parent
             super().__init__(name, parent)
@@ -434,7 +545,6 @@ def exercise(example_code, expect_exception):
             return myvfsfile(self.parent, name, flags)
 
     class myvfsfile(apsw.VFSFile):
-
         def __init__(self, parent, filename, flags):
             hasattr(filename, "parameters") and filename.parameters
             super().__init__(parent, filename, flags)
@@ -452,6 +562,7 @@ def exercise(example_code, expect_exception):
     file_cleanup()
 
     import apsw.tests
+
     apsw.tests.testtimeout = False
     apsw.tests.vfstestdb(f"{ tmpdir.name }/dbfile-delme-vfswal", "apswfivfs2", mode="wal")
 
@@ -463,10 +574,10 @@ def exercise(example_code, expect_exception):
         return
 
     file_cleanup()
-    exec(example_code, {"print": lambda *args: None}, None)
-
-    if expect_exception:
-        return
+    for code, __ in example_code:
+        exec(code, {"print": lambda *args: None}, None)
+        if expect_exception:
+            return
 
     if False:
         # This does recursion error, which also causes lots of last chance
@@ -485,12 +596,15 @@ def exercise(example_code, expect_exception):
     del vfsinstance2
 
     del sys.modules["apsw.ext"]
+    del sys.modules["apsw._unicode"]
+    del sys.modules["apsw.unicode"]
     gc.collect()
+    del apsw._unicode
+    del apsw.unicode
     del apsw
 
 
 class Tester:
-
     Proceed = 0x1FACADE
     "magic value keep going (ie do not inject a return value)"
     ProceedReturn18 = 0x2FACADE
@@ -506,24 +620,32 @@ class Tester:
         self.call_remap = {v: k for k, v in genfaultinject.call_map.items()}
 
         sys.apsw_fault_inject_control = self.fault_inject_control
+        sys.apsw_should_fault = self.should_fault
 
         lines, start = inspect.getsourcelines(exercise)
         end = start + len(lines)
         self.start_line = start
         self.end_line = end
 
-        with open("example-code.py", "rt") as f:
-            code = f.read()
+        self.example_code = []
+        for example in pathlib.Path().glob("examples/*.py"):
+            code = example.read_text()
             # we do various transformations but must keep the line numbers the same
             code = code.replace("import os", "import os,contextlib")
             # make it use tmpfs
             code = code.replace('"dbfile"', f'"{ tmpdir.name }/dbfile-delme-example"')
             code = code.replace("myobfudb", f"{ tmpdir.name }/myobfudb-example")
-            # logging will fail
-            code = code.replace("apsw.ext.log_sqlite()",
-                                "with contextlib.suppress(apsw.MisuseError): apsw.ext.log_sqlite(level=0)")
-        self.example_code_lines = len(code.split("\n"))
-        self.example_code = compile(code, "example-code.py", 'exec')
+            # silence logging
+            code = code.replace("apsw.ext.log_sqlite()", "apsw.ext.log_sqlite(level=0)")
+            # resource usage is deliberately slow
+            code = code.replace("time.sleep(1.3)", "time.sleep(0)")
+            # and it and Trace make output
+            code = code.replace("import random", "import random,io; string_sink=io.StringIO()")
+            code = code.replace("sys.stdout,", "string_sink,")
+            # fix pprint
+            code = code.replace("from pprint import pprint", "pprint = print")
+
+            self.example_code.append((compile(code, example.with_suffix(""), "exec"), len(code.split("\n"))))
 
     @staticmethod
     def apsw_attr(name: str):
@@ -535,6 +657,10 @@ class Tester:
         apsw_attr = self.apsw_attr
         fname = self.call_remap.get(key[0], key[0])
         try:
+            if key[0] == "APSW_FAULT_INJECT":
+                self.expect_exception.append(Exception)
+                return True
+
             if fname in self.returns["pointer"]:
                 self.expect_exception.append(MemoryError)
                 return 0, MemoryError, self.FAULTS
@@ -546,9 +672,9 @@ class Tester:
             # we need these to succeed at the SQLite level but still return
             # an error.  Otherwise there will be memory leaks.
             if fname in {
-                    "sqlite3_close",
-                    "sqlite3_vfs_unregister",
-                    "sqlite3_backup_finish",
+                "sqlite3_close",
+                "sqlite3_vfs_unregister",
+                "sqlite3_backup_finish",
             }:
                 self.expect_exception.append(apsw_attr("ConnectionNotClosedError"))
                 self.expect_exception.append(apsw_attr("TooBigError"))  # code 18
@@ -578,12 +704,22 @@ class Tester:
 
             # pointers with 0 being failure
             if fname in {
-                    "sqlite3_backup_init", "sqlite3_malloc64", "sqlite3_mprintf", "sqlite3_column_name",
-                    "sqlite3_aggregate_context", "sqlite3_expanded_sql"
+                "sqlite3_backup_init",
+                "sqlite3_malloc64",
+                "sqlite3_mprintf",
+                "sqlite3_column_name",
+                "sqlite3_aggregate_context",
+                "sqlite3_expanded_sql",
             }:
                 self.expect_exception.append(apsw_attr("SQLError"))
                 self.expect_exception.append(MemoryError)
                 return 0
+
+            # we only use this to get fts5api and always claim it was because fts5
+            # is not present
+            if fname in {"sqlite3_prepare", "sqlite3_bind_pointer"}:
+                self.expect_exception.append(apsw_attr("NoFTS5Error"))
+                return self.apsw_attr("SQLITE_ERROR")
 
             if fname.startswith("sqlite3_"):
                 self.expect_exception.append(apsw_attr("TooBigError"))
@@ -599,7 +735,7 @@ class Tester:
                 self.expect_exception.append(TypeError)
                 return 0
 
-            if fname.startswith("Py") or fname in {"_PyBytes_Resize", "getfunctionargs"}:
+            if fname.startswith("Py") or fname in {"_PyBytes_Resize", "_PyTuple_Resize", "getfunctionargs"}:
                 # for ones returning -1 on error
                 self.expect_exception.append(self.FAULTT)
                 return (-1, *self.FAULT)
@@ -614,6 +750,14 @@ class Tester:
 
         print("Unhandled", key)
         breakpoint()
+
+    def should_fault(self, name, pending_exception):
+        if pending_exception != (None, None, None):
+            return False
+        key = ("APSW_FAULT_INJECT", "", name, 0, "")
+        res = self.fault_inject_control(key)
+        assert res in {self.Proceed, True}
+        return res is True
 
     def fault_inject_control(self, key):
         if testing_recursion and key[2] in {"apsw_write_unraisable", "apswvfs_excepthook"}:
@@ -637,11 +781,10 @@ class Tester:
             if key in self.has_faulted_ever:
                 return self.Proceed
 
-        line, percent = self.get_progress()
+        line = self.get_progress()
         if self.runplan is not None:
             print("  Pre" if self.runplan else "Fault", end=" ")
-        print(f"faulted: { len(self.has_faulted_ever): 4} / new: { len(self.to_fault): 3}"
-              f" cur: { int(percent): 3}%  L{ line } { key }")
+        print(f"faulted: { len(self.has_faulted_ever): 4} / new: { len(self.to_fault): 3}" f" { line } { key }")
         try:
             return self.FaultCall(key)
         finally:
@@ -667,40 +810,38 @@ class Tester:
     def __exit__(self, e1, e2, e3):
         if e2:
             self.add_exc(e2)
+        if self.abort > 3:
+            tbe = traceback.TracebackException(e1, e2, e3, capture_locals=True, compact=True)
+            for line in tbe.format():
+                print(line, file=sys.stderr)
+            return False
         return True  # do not raise
 
     def get_progress(self):
         # work out what progress in exercise
         ss = traceback.extract_stack()
-        curline = self.start_line
-        exercise_ok = True
-        for frame in ss:
-            if frame.filename == __file__ and exercise_ok and frame.name == "exercise":
-                curline = max(curline, frame.lineno)
-            if frame.filename == "example-code.py":
-                if exercise_ok:
-                    exercise_ok = False
-                    curline = frame.lineno
-                curline = max(curline, frame.lineno)
-
-        total_lines = self.end_line - self.start_line + self.example_code_lines
-        if exercise_ok:
-            curline_pretty = f"{ curline }(exercise)"
-            pos = curline - self.start_line
-        else:
-            curline_pretty = f"{ curline }(example) "
-            pos = curline + (self.end_line - self.start_line)
-
-        return curline_pretty, 100 * pos / total_lines
+        for frame in reversed(ss):
+            if frame.filename == __file__ and self.start_line <= frame.lineno <= self.end_line:
+                return f"(exercise) L{frame.lineno}"
+            if frame.filename.startswith("examples"):
+                return f"{frame.filename} L{frame.lineno}"
+        return "GC"
 
     def verify_exception(self, tested):
-        ok = any(e[0] in self.expect_exception for e in self.exc_happened) or any(self.FAULTS in str(e[1])
-                                                                                  for e in self.exc_happened)
+        ok = any(e[0] in self.expect_exception for e in self.exc_happened) or any(
+            self.FAULTS in str(e[1]) for e in self.exc_happened
+        )
         # these faults happen in fault handling so can't fault report themselves.
         if tested and list(tested)[0][2] in {
-                "apsw_set_errmsg", "apsw_get_errmsg", "apsw_write_unraisable", "MakeSqliteMsgFromPyException",
-                "apswvfs_excepthook"
+            "apsw_set_errmsg",
+            "apsw_get_errmsg",
+            "apsw_write_unraisable",
+            "MakeSqliteMsgFromPyException",
+            "apswvfs_excepthook",
         }:
+            return
+        # fault inject doesn't know which specific exception it will be
+        if len(self.expect_exception) == 1 and self.expect_exception[0] is Exception:
             return
         if len(self.exc_happened) < len(tested):
             if len(tested) >= 2 and (tested[0][0], tested[1][0]) == ("_PyObject_New", "sqlite3_backup_finish"):
@@ -727,16 +868,15 @@ class Tester:
                 print("Fewer exceptions observed than faults generated")
             if self.last_exc:
                 print("Traceback:")
-                tbe = traceback.TracebackException(type(self.last_exc),
-                                                   self.last_exc,
-                                                   self.last_exc.__traceback__,
-                                                   capture_locals=False,
-                                                   compact=True)
+                tbe = traceback.TracebackException(
+                    type(self.last_exc), self.last_exc, self.last_exc.__traceback__, capture_locals=False, compact=True
+                )
                 for line in tbe.format():
                     print(line)
             sys.exit(1)
 
     def run(self):
+        self.abort = 0
         # keys that we will fault in the future.  we saw these keys while a
         # call had already faulted, so we have to do those same faults again
         # to see this one.  value is list of those previous faults
@@ -768,20 +908,28 @@ class Tester:
             else:
                 self.runplan = None
 
-            self.last_exc = None  # it is ok to see this line when faulting apsw_write_unraisable (comes from PyErr_Print)
+            self.last_exc = (
+                None  # it is ok to see this line when faulting apsw_write_unraisable (comes from PyErr_Print)
+            )
             with self:
                 try:
                     if complete:
-                        # we do this at the very end
-                        import apsw
-                        apsw.shutdown()
+                        # we do this at the very end with shutdown being terminal
+                        sys.modules["apsw"].shutdown()
                     else:
                         exercise(self.example_code, self.expect_exception)
+                        self.abort = 0
                         if not use_runplan and not self.faulted_this_round:
                             use_runplan = True
                             print("\nExercising locations that require multiple failures\n")
                             continue
                 finally:
+                    if not use_runplan and not self.faulted_this_round:
+                        self.abort += 1
+                        if self.abort > 3:
+                            print("NOT MAKING PROGRESS - ABORTING")
+                    else:
+                        self.abort = 0
                     if "apsw" in sys.modules:
                         for c in sys.modules["apsw"].connections():
                             c.close()
@@ -791,6 +939,10 @@ class Tester:
 
         if complete:
             print("\nAll faults exercised")
+            if hasattr(sys.modules["apsw"], "_fini"):
+                print("Running apsw fini()")
+                sys.modules["apsw"]._fini()
+            del sys.modules["apsw"]
 
         print(f"Total faults: { len(self.has_faulted_ever) }")
 

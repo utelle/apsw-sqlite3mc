@@ -1,8 +1,8 @@
 
-SQLITEVERSION=3.46.1
+SQLITEVERSION=3.47.0
 APSWSUFFIX=.0
 
-RELEASEDATE="13 August 2024"
+RELEASEDATE="27 November 2024"
 
 VERSION=$(SQLITEVERSION)$(APSWSUFFIX)
 VERDIR=apsw-$(VERSION)
@@ -17,7 +17,8 @@ GENDOCS = \
 	doc/connection.rst \
 	doc/cursor.rst \
 	doc/apsw.rst \
-	doc/backup.rst
+	doc/backup.rst \
+	doc/fts.rst
 
 .PHONY : help all tagpush clean doc docs build_ext build_ext_debug coverage pycoverage test test_debug fulltest linkcheck unwrapped \
 		 publish stubtest showsymbols compile-win setup-wheel source_nocheck source release pydebug pyvalgrind valgrind valgrind1 \
@@ -27,7 +28,7 @@ help: ## Show this help
 	@egrep -h '\s##\s' $(MAKEFILE_LIST) | sort | \
 	awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-all: src/apswversion.h src/apsw.docstrings apsw/__init__.pyi src/constants.c src/stringconstants.c test docs ## Update generated files, build, test, make doc
+all: src/apswversion.h src/apsw.docstrings apsw/__init__.pyi src/constants.c src/stringconstants.c  test docs ## Update generated files, build, test, make doc
 
 tagpush: ## Tag with version and push
 	test "`git branch --show-current`" = master
@@ -40,25 +41,31 @@ clean: ## Cleans up everything
 	mkdir dist
 	for i in 'vgcore.*' '.coverage' '*.pyc' '*.pyo' '*~' '*.o' '*.so' '*.dll' '*.pyd' '*.gcov' '*.gcda' '*.gcno' '*.orig' '*.tmp' 'testdb*' 'testextension.sqlext' ; do \
 		find . -type f -name "$$i" -print0 | xargs -0 --no-run-if-empty rm -f ; done
-	rm -f doc/typing.rstgen doc/example.rst doc/renames.rstgen $(GENDOCS)
+	rm -f doc/typing.rstgen doc/example.rst doc/example-fts.rst doc/renames.rstgen $(GENDOCS)
 	-rm -rf sqlite3/
 
 doc: docs ## Builds all the doc
 
 docs: build_ext docs-no-fetch
 
-docs-no-fetch: $(GENDOCS) doc/example.rst doc/.static doc/typing.rstgen doc/renames.rstgen
+docs-no-fetch: $(GENDOCS) doc/example.rst doc/example-fts.rst doc/.static doc/typing.rstgen doc/renames.rstgen
 	rm -f testdb
 	env PYTHONPATH=. $(PYTHON) tools/docmissing.py
 	env PYTHONPATH=. $(PYTHON) tools/docupdate.py $(VERSION)
 	$(MAKE) PYTHONPATH="`pwd`" VERSION=$(VERSION) RELEASEDATE=$(RELEASEDATE) -C doc clean html
 	tools/spellcheck.sh
-	rst2html.py --strict --verbose --exit-status 1 README.rst >/dev/null
+	rst2html5 --strict --verbose --exit-status 1 README.rst >/dev/null
 
-doc/example.rst: example-code.py tools/example2rst.py src/apswversion.h
+doc/example.rst: examples/main.py tools/example2rst.py src/apswversion.h
 	rm -f dbfile
-	env PYTHONPATH=. $(PYTHON) -sS tools/example2rst.py
+	env PYTHONPATH=. $(PYTHON) -sS tools/example2rst.py examples/main.py doc/example.rst
 	rm -f dbfile
+
+doc/example-fts.rst: examples/fts.py tools/example2rst.py src/apswversion.h
+	-rm -f recipes.db*
+	cp ../apsw-extended-testing/recipes.db .
+	env PYTHONPATH=. $(PYTHON) -sS tools/example2rst.py examples/fts.py doc/example-fts.rst
+	rm -f recipes.db*
 
 doc/typing.rstgen: src/apswtypes.py tools/types2rst.py
 	-rm -f doc/typing.rstgen
@@ -68,7 +75,6 @@ doc/renames.rstgen: tools/names.py tools/renames.json
 	-rm -f doc/renames.rstgen
 	env PYTHONPATH=. $(PYTHON) tools/names.py rst-gen > doc/renames.rstgen
 
-
 doc/.static:
 	mkdir -p doc/.static
 
@@ -77,16 +83,16 @@ doc-depends: ## pip installs packages needed to build doc
 
 dev-depends: ## pip installs packages useful for development (none are necessary except setuptools)
 	$(PYTHON) -m pip install -U --upgrade-strategy eager build wheel setuptools pip
-	$(PYTHON) -m pip install -U --upgrade-strategy eager mypy pdbpp coverage flake8 ruff
+	$(PYTHON) -m pip install -U --upgrade-strategy eager mypy pdbp coverage ruff
 
 # This is probably gnu make specific but only developers use this makefile
-$(GENDOCS): doc/%.rst: src/%.c tools/code2rst.py
+$(GENDOCS): doc/%.rst: src/%.c tools/code2rst.py  tools/tocupdate.sql
 	env PYTHONPATH=. $(PYTHON) tools/code2rst.py $(SQLITEVERSION) doc/docdb.json $< $@
 
-apsw/__init__.pyi src/apsw.docstrings: $(GENDOCS) tools/gendocstrings.py src/apswtypes.py
+apsw/__init__.pyi src/apsw.docstrings: $(GENDOCS) tools/gendocstrings.py src/apswtypes.py  tools/tocupdate.sql
 	env PYTHONPATH=. $(PYTHON) tools/gendocstrings.py doc/docdb.json src/apsw.docstrings
 
-src/constants.c: Makefile tools/genconstants.py src/apswversion.h
+src/constants.c: Makefile tools/genconstants.py src/apswversion.h tools/tocupdate.sql
 	-rm -f src/constants.c
 	env PYTHONPATH=. $(PYTHON) tools/genconstants.py > src/constants.c
 
@@ -106,18 +112,27 @@ build_ext_debug: src/apswversion.h src/faultinject.h ## Fetches SQLite and build
 	env $(PYTHON) setup.py fetch --version=$(SQLITEVERSION) --all build_ext --inplace --force --enable-all-extensions --debug
 
 coverage:  src/faultinject.h ## Coverage of the C code
-	env $(PYTHON) setup.py fetch --version=$(SQLITEVERSION) --all && tools/coverage.sh
+	tools/coverage.sh
 
-PYCOVERAGEOPTS=--source apsw --append
+PYCOVERAGEOPTS=--source apsw -p
 
-pycoverage:  ## Coverage of the Python code
-	-rm -rf .coverage htmlcov dbfile
+pycoverage:  ## Coverage of all the Python code
+	-rm -rf .coverage .coverage.* htmlcov dbfile
 	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.tests
 	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw ":memory:" .exit
-	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.speedtest --apsw --sqlite3
-	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.trace -o /dev/null --sql --rows --timestamps --thread example-code.py >/dev/null
+	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.speedtest --iterations 2 --scale 2 --unicode 25 --apsw --sqlite3
+	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.trace -o /dev/null --sql --rows --timestamps --thread examples/main.py >/dev/null
+	$(PYTHON) -m coverage combine
 	$(PYTHON) -m coverage report -m
 	$(PYTHON) -m coverage html --title "APSW python coverage"
+	$(PYTHON) -m webbrowser -t htmlcov/index.html
+
+ftscoverage: ## Coverage of Python code for FTS support
+	-rm -rf .coverage .coverage.* htmlcov dbfile
+	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.ftstests
+	$(PYTHON) -m coverage combine
+	$(PYTHON) -m coverage report -m
+	$(PYTHON) -m coverage html --title "APSW FTS python coverage"
 	$(PYTHON) -m webbrowser -t htmlcov/index.html
 
 test: build_ext ## Standard testing
@@ -146,17 +161,19 @@ publish: docs
 src/apswversion.h: Makefile
 	echo "#define APSW_VERSION \"$(VERSION)\"" > src/apswversion.h
 
-stubtest: build_ext  ## Verifies type annotations with mypy
+stubtest: ## Verifies type annotations with mypy
 	-$(PYTHON) -m mypy.stubtest --allowlist tools/stubtest.allowlist apsw
-	$(PYTHON) -m mypy --allow-redefinition example-code.py
-	$(PYTHON) -m mypy --allow-redefinition --strict example-code.py
+	env PYTHONPATH=. $(PYTHON) -m mypy --allow-redefinition examples/main.py
+	env PYTHONPATH=. $(PYTHON) -m mypy --allow-redefinition examples/fts.py
 
+# set this to a commit id to grab that instead
+FOSSIL_URL="https://www.sqlite.org/src/tarball/sqlite.tar.gz"
 fossil: ## Grabs latest trunk from SQLite source control, extracts and builds in sqlite3 directory
 	-mv sqlite3/sqlite3config.h .
 	-rm -rf sqlite3
 	mkdir sqlite3
-	set -e ; cd sqlite3 ; curl --output - https://www.sqlite.org/src/tarball/sqlite.tar.gz | tar xfz - --strip-components=1
-	set -e ; cd sqlite3 ; ./configure --quiet --enable-all ; $(MAKE) sqlite3.c sqlite3
+	set -e ; cd sqlite3 ; curl --output - $(FOSSIL_URL) | tar xfz - --strip-components=1
+	set -e ; cd sqlite3 ; ./configure --quiet --all --disable-tcl ; $(MAKE) sqlite3.c sqlite3
 	-mv sqlite3config.h sqlite3/
 
 # the funky test stuff is to exit successfully when grep has rc==1 since that means no lines found.
@@ -165,6 +182,8 @@ showsymbols:  ## Finds any C symbols that aren't static(private)
 	$(PYTHON) setup.py fetch --all --version=$(SQLITEVERSION) build_ext --inplace --force --enable-all-extensions
 	test -f apsw/__init__`$(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"`
 	set +e; nm --extern-only --defined-only apsw/__init__`$(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"` | egrep -v ' (__bss_start|_edata|_end|_fini|_init|initapsw|PyInit_apsw)$$' ; test $$? -eq 1 || false
+	test -f apsw/_unicode`$(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"`
+	set +e; nm --extern-only --defined-only apsw/_unicode`$(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"` | egrep -v ' (__bss_start|_edata|_end|_fini|_init|PyInit__unicode)$$' ; test $$? -eq 1 || false
 
 compile-win:  ## Builds and tests against all the Python versions on Windows
 	-del /q apsw\\*.pyd
@@ -188,8 +207,6 @@ compile-win:  ## Builds and tests against all the Python versions on Windows
 	$(MAKE) compile-win-one PYTHON=c:/python310/python
 	$(MAKE) compile-win-one PYTHON=c:/python39-32/python
 	$(MAKE) compile-win-one PYTHON=c:/python39/python
-	$(MAKE) compile-win-one PYTHON=c:/python38/python
-	$(MAKE) compile-win-one PYTHON=c:/python38-64/python
 
 # I did try to make this use venv but then the pip inside the venv and
 # other packages were skipped due to metadata issues
@@ -210,6 +227,7 @@ source_nocheck: src/apswversion.h
 	test "`git branch --show-current`" = master
 	find . -depth -name '.*cache' -type d -exec rm -r "{}" \;
 	env APSW_NO_GA=t $(MAKE) doc
+	rm -rf doc/build/html/_static/fonts/ doc/build/html/_static/css/fonts/
 	$(PYTHON) setup.py sdist --formats zip --add-doc
 
 source: source_nocheck # Make the source and then check it builds and tests correctly.  This will catch missing files etc
@@ -228,9 +246,15 @@ release: ## Signs built source file(s)
 	-rm -f dist/$(VERDIR).cosign-bundle
 	cosign sign-blob --yes --bundle dist/$(VERDIR).cosign-bundle dist/$(VERDIR).zip
 
+src/_unicodedb.c: tools/ucdprops2code.py ## Update generated Unicode database lookups
+	-rm -f $@
+	$(PYTHON) tools/ucdprops2code.py $@
+
 # building a python debug interpreter
-PYDEBUG_VER=3.12.4
+PYDEBUG_VER=3.12.7
 PYDEBUG_DIR=/space/pydebug
+PYTHREAD_VER=$(PYDEBUG_VER)
+PYTHREAD_DIR=/space/pythread
 PYVALGRIND_VER=$(PYDEBUG_VER)
 PYVALGRIND_DIR=/space/pyvalgrind
 # This must end in slash
@@ -244,6 +268,14 @@ pydebug: ## Build a debug python including address sanitizer.  Extensions it bui
 	--without-freelists --with-assertions && \
 	env ASAN_OPTIONS=detect_leaks=false $(MAKE) -j install
 	$(MAKE) dev-depends PYTHON=$(PYDEBUG_DIR)/bin/python3
+
+pythread: ## Build a debug python including thread sanitizer.  Extensions it builds are also thread sanitized
+	set -x && cd "$(PYTHREAD_DIR)" && find . -delete && \
+	curl https://www.python.org/ftp/python/`echo $(PYTHREAD_VER) | sed 's/[abr].*//'`/Python-$(PYTHREAD_VER).tar.xz | tar xfJ - && \
+	cd Python-$(PYDEBUG_VER) && \
+	env CFLAGS=-fsanitize=thread LDFLAGS=-fsanitize=thread TSAN_OPTIONS=report_bugs=0 ./configure  --without-pymalloc --with-pydebug --prefix="$(PYTHREAD_DIR)" --without-freelists  && \
+	$(MAKE) -j install
+	$(MAKE) dev-depends PYTHON=$(PYTHREAD_DIR)/bin/python3
 
 pyvalgrind: ## Build a debug python with valgrind integration
 	set -x && cd "$(PYVALGRIND_DIR)" && find . -delete && \
@@ -276,4 +308,7 @@ megatest-build: ## Builds and updates podman container for running megatest
 
 MEGATEST_ARGS=
 megatest-run: ## Runs megatest in container
-	podman run -i --tty -v "`pwd`/../apsw-test:/megatest/apsw-test" -v "`pwd`:/megatest/apsw" -v "$$HOME/.ccache:/megatest/ccache" apsw-megatest $(MEGATEST_ARGS)
+	podman run --pids-limit=-1 -i --tty -v "`pwd`/../apsw-test:/megatest/apsw-test" -v "`pwd`:/megatest/apsw" -v "$$HOME/.ccache:/megatest/ccache" apsw-megatest $(MEGATEST_ARGS)
+
+megatest-shell: ## Runs a shell in the megatest container
+	podman run -i --tty -v "`pwd`/../apsw-test:/megatest/apsw-test" -v "`pwd`:/megatest/apsw" -v "$$HOME/.ccache:/megatest/ccache" --entrypoint /bin/bash apsw-megatest

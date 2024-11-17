@@ -25,6 +25,7 @@ from typing import Optional, TextIO
 
 import apsw
 import apsw.ext
+import apsw.fts5
 
 
 class Shell:
@@ -116,11 +117,11 @@ class Shell:
         self.stderr = stderr or sys.stderr
 
         # default to box output
-        if self._using_a_terminal() and hasattr(self, "output_box"):
+        if self._using_a_terminal():
             self.output = self.output_box
             self.box_options = {
                 "quote": False,
-                "string_sanitize": 1,
+                "string_sanitize": 0,
                 "null": "NULL",
                 "truncate": 4096,
                 "text_width": self._terminal_width(32),
@@ -156,6 +157,17 @@ class Shell:
         return getattr(self.stdin, "isatty", None) and self.stdin.isatty() and getattr(self.stdout, "isatty",
                                                                                        None) and self.stdout.isatty()
 
+    def _apply_fts(self):
+        # Applies the default apsw fts tokenizers and functions
+        # very useful opening databases from CLI shell
+        if self._db is not None:
+            try:
+                apsw.fts5.register_tokenizers(self._db, apsw.fts5.map_tokenizers)
+                apsw.fts5.register_functions(self._db, apsw.fts5.map_functions)
+            except apsw.NoFTS5Error:
+                pass
+
+
     def _ensure_db(self):
         "The database isn't opened until first use.  This function ensures it is now open."
         if not self._db:
@@ -164,6 +176,7 @@ class Shell:
             self._db = apsw.Connection(self.dbfilename,
                                        flags=apsw.SQLITE_OPEN_URI | apsw.SQLITE_OPEN_READWRITE
                                        | apsw.SQLITE_OPEN_CREATE)
+            self._apply_fts()
         return self._db
 
     def _set_db(self, newv):
@@ -174,6 +187,7 @@ class Shell:
             self._db = None
         self._db = db
         self.dbfilename = dbfilename
+        self._apply_fts()
 
     db = property(_ensure_db, _set_db, None, "The current :class:`~apsw.Connection`")
 
@@ -786,6 +800,9 @@ Enter ".help" for instructions
             else:
                 text = str(eval)
 
+            if not text.strip():
+                text = "(Exception)"
+
             if not text.endswith("\n"):
                 text = text + "\n"
 
@@ -936,45 +953,41 @@ Enter ".help" for instructions
             p = sig.parameters[param_name]
             use_prow = p.annotation == "Shell.Row"
 
-            timing_start = self.get_resource_usage()
+            with apsw.ext.ShowResourceUsage(file = self.stderr if self.timer else None, db=self.db, scope="thread", indent="* "):
+                column_names = None
+                rows = [] if getattr(self.output, "all_at_once", False) else None
 
-            column_names = None
-            rows = [] if getattr(self.output, "all_at_once", False) else None
+                cur = self.db.cursor()
+                if self.db.exec_trace:
+                    cur.exec_trace = lambda *args: True
+                if self.db.row_trace:
+                    cur.row_trace = lambda x, y: y
 
-            cur = self.db.cursor()
-            if self.db.exec_trace:
-                cur.exec_trace = lambda *args: True
-            if self.db.row_trace:
-                cur.row_trace = lambda x, y: y
-
-            for prow in Shell.PositionRow(cur.execute(qd.query, bindings)):
-                row = prow.row
-                if column_names is None:
-                    column_names = prow.columns
+                for prow in Shell.PositionRow(cur.execute(qd.query, bindings)):
+                    row = prow.row
+                    if column_names is None:
+                        column_names = prow.columns
+                        if qd.explain == 2:
+                            # column 2 is "notused"
+                            column_names = tuple(c for i, c in enumerate(column_names) if i != 2)
+                        if summary:
+                            self._output_summary(summary[0])
+                        if rows is None:
+                            self.output(True, column_names)
                     if qd.explain == 2:
-                        # column 2 is "notused"
-                        column_names = tuple(c for i, c in enumerate(column_names) if i != 2)
-                    if summary:
-                        self._output_summary(summary[0])
+                        row = tuple(c for i, c in enumerate(row) if i != 2)
+
+                    row = prow if use_prow else row
                     if rows is None:
-                        self.output(True, column_names)
-                if qd.explain == 2:
-                    row = tuple(c for i, c in enumerate(row) if i != 2)
+                        self.output(False, row)
+                    else:
+                        rows.append(row)
 
-                row = prow if use_prow else row
-                if rows is None:
-                    self.output(False, row)
-                else:
-                    rows.append(row)
+                if column_names and rows:
+                    self.output(column_names, rows)
 
-            if column_names and rows:
-                self.output(column_names, rows)
-
-            if column_names and summary:
-                self._output_summary(summary[1])
-
-            if self.timer:
-                self.display_timing(timing_start, self.get_resource_usage())
+                if column_names and summary:
+                    self._output_summary(summary[1])
 
             if qd.explain:
                 self.pop_output()
@@ -1008,6 +1021,12 @@ Enter ".help" for instructions
             rest = command[command.index(cmd[0]) + len(cmd[0]):].strip()
             if rest:
                 cmd = [cmd[0], rest]
+        # special handling for ftsq TABLE to preserve exact query
+        if len(cmd) > 2 and cmd[0] == "ftsq":
+            pos = command.index(cmd[1]) + len(cmd[1])
+            while command[pos].strip(): # test it isn't whitespace, eq quoting
+                pos += 1
+            cmd = [cmd[0], cmd[1], command[pos:].strip()]
         res = fn(cmd[1:])
 
     ###
@@ -1635,6 +1654,17 @@ Enter ".help" for instructions
             query = query + " OR ".join(colq)
             self.process_sql(query, queryparams, internal=True, summary=("Table " + table + "\n", "\n"))
 
+    def command_ftsq(self, cmd):
+        """ftsq TABLE query: Issues the query against the named FTS5 table
+
+        The top 20 results are shown.  Text after the table name is used
+        exactly as the query - do not extra shell quote it.
+        """
+        if len(cmd) != 2:
+            raise self.Error("Expected a table name and a query")
+        query =f"select rowid, snippet({ cmd[0] }, -1, '<<', '>>', '...', 10) as 'snippet' from { cmd[0] }(?) order by rank limit 20"
+        self.process_sql(query, (cmd[1], ))
+
     def command_header(self, cmd):
         """header(s) ON|OFF: Display the column names in output (default OFF)
 
@@ -1733,6 +1763,7 @@ Enter ".help" for instructions
                     w = len(self._help_info[command][0])
 
             for command in cmd:
+                command = command.lstrip(".")
                 if command == "headers": command = "header"
                 if command not in self._help_info:
                     raise self.Error("No such command \"%s\"" % (command, ))
@@ -2170,12 +2201,11 @@ Enter ".help" for instructions
                 "table": False,
                 "qbox": True
             }[w],
-            "word_wrap": True,
         }
 
         # argparse unfortunately tries to do too much and really is about program arguments,
         # but it isn't worthwhile re-implementing this
-        p = argparse.ArgumentParser(allow_abbrev=False, usage=f".mode { w }", prog="")
+        p = argparse.ArgumentParser(allow_abbrev=False, usage=f".mode { w } [options]", prog="")
         if hasattr(p, "exit_on_error"):
             p.exit_on_error = False
         p.set_defaults(**defaults)
@@ -2200,22 +2230,16 @@ Enter ".help" for instructions
                        action="store_true",
                        dest="use_unicode",
                        help="Use ascii line drawing like +=-+ ")
-        p.add_argument("--word-wrap",
-                       action="store_true",
-                       dest="word_wrap",
-                       help="Wrap text at word boundaries [%(default)s]")
-        p.add_argument("--no-word-wrap",
-                       action="store_false",
-                       dest="word_wrap",
-                       help="Wrap at column width ignoring words")
         text = io.StringIO()
         try:
             with contextlib.redirect_stderr(text):
                 with contextlib.redirect_stdout(text):
                     self.box_options = vars(p.parse_args(cmd[1:]))
-        except:
-            # bare except because SystemExit can be raised
-            raise Shell.Error(text.getvalue())
+        except (SystemExit, argparse.ArgumentError) as exc:
+            if isinstance(exc, argparse.ArgumentError):
+                print(exc.message, file=text)
+            print("\n\nUse --help for options", file=text)
+            raise Shell.Error(text.getvalue()) from None
         self.output = self.output_box
 
     # needed so command completion and help can use it
@@ -2306,6 +2330,7 @@ Enter ".help" for instructions
                                    vfs=vfs,
                                    flags=apsw.SQLITE_OPEN_URI | apsw.SQLITE_OPEN_READWRITE
                                    | apsw.SQLITE_OPEN_CREATE)
+        self._apply_fts()
 
     def command_output(self, cmd):
         """output FILENAME: Send output to FILENAME (or stdout)
@@ -2688,16 +2713,10 @@ Enter ".help" for instructions
         The values displayed are in seconds when shown as floating
         point or an absolute count.  Only items that have changed
         since starting the query are shown.  On non-Windows platforms
-        considerably more information can be shown.
+        considerably more information can be shown.  SQLite statistics
+        are also included.
         """
-        if self._boolean_command("timer", cmd):
-            try:
-                self.get_resource_usage()
-            except Exception:
-                raise self.Error("Timing not supported by this Python version/platform")
-            self.timer = True
-        else:
-            self.timer = False
+        self.timer = self._boolean_command("timer", cmd)
 
     def command_version(self, cmd):
         "version: Displays SQLite, APSW, and Python version information"
@@ -3249,84 +3268,6 @@ Enter ".help" for instructions
 
         return [v for v in sorted(completions) if v.startswith(token) and v != token]
 
-    def get_resource_usage(self):
-        """Return a dict of various numbers (ints or floats).  The
-        .timer command shows the difference between before and after
-        results of what this returns by calling :meth:`display_timing`"""
-        if sys.platform == "win32":
-            import ctypes
-            import platform
-            import time
-            ctypes.windll.kernel32.GetProcessTimes.argtypes = [
-                platform.architecture()[0] == '64bit' and ctypes.c_int64 or ctypes.c_int32, ctypes.c_void_p,
-                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
-            ]
-
-            # All 4 out params have to be present.  FILETIME is really
-            # just a 64 bit quantity in 100 nanosecond granularity
-            dummy = ctypes.c_ulonglong()
-            utime = ctypes.c_ulonglong()
-            stime = ctypes.c_ulonglong()
-            rc = ctypes.windll.kernel32.GetProcessTimes(
-                ctypes.windll.kernel32.GetCurrentProcess(),
-                ctypes.byref(dummy),  # creation time
-                ctypes.byref(dummy),  # exit time
-                ctypes.byref(stime),
-                ctypes.byref(utime))
-            if rc:
-                return {
-                    'Wall clock': time.time(),
-                    'User time': float(utime.value) / 10000000,
-                    'System time': float(stime.value) / 10000000
-                }
-            return {}
-        else:
-            import resource
-            import time
-            r = resource.getrusage(resource.RUSAGE_SELF)
-            res = {'Wall clock': time.time()}
-            for i, desc in (
-                ("utime", "User time"),
-                ("stime", "System time"),
-                ("maxrss", "Max rss"),
-                ("idrss", "Memory"),
-                ("isrss", "Stack"),
-                ("ixrss", "Shared Memory"),
-                ("minflt", "PF (no I/O)"),
-                ("majflt", "PF (I/O)"),
-                ("inblock", "Blocks in"),
-                ("oublock", "Blocks out"),
-                ("nsignals", "Signals"),
-                ("nvcsw", "Voluntary context switches"),
-                ("nivcsw", "Involunary context switches"),
-                ("msgrcv", "Messages received"),
-                ("msgsnd", "Messages sent"),
-                ("nswap", "Swaps"),
-            ):
-                f = "ru_" + i
-                if hasattr(r, f):
-                    res[desc] = getattr(r, f)
-            return res
-
-    def display_timing(self, before, after):
-        """Writes the difference between before and after to self.stderr.
-        The data is dictionaries returned from
-        :meth:`get_resource_usage`."""
-        v = list(before.keys())
-        for i in after:
-            if i not in v:
-                v.append(i)
-        v.sort()
-        for k in v:
-            if k in before and k in after:
-                one = before[k]
-                two = after[k]
-                val = two - one
-                if val:
-                    if isinstance(val, float):
-                        self.write(self.stderr, "+ %s: %.4f\n" % (k, val))
-                    else:
-                        self.write(self.stderr, "+ %s: %d\n" % (k, val))
 
     ### Output helpers
     @dataclasses.dataclass(**({"slots": True, "frozen": True} if sys.version_info >= (3, 10) else {}))
