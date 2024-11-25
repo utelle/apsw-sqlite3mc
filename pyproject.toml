@@ -1,6 +1,13 @@
+[project]
+name = "apsw"
+dynamic = ["version", "urls", "classifiers", "keywords", "authors", "license", "requires-python", "readme", "description"]
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[project.scripts]
+apsw = "apsw.__main__:main"
 
 [tool.ruff]
 line-length = 120

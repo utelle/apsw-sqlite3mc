@@ -1,8 +1,8 @@
 
-SQLITEVERSION=3.47.0
+SQLITEVERSION=3.47.1
 APSWSUFFIX=.0
 
-RELEASEDATE="27 November 2024"
+RELEASEDATE="25 November 2024"
 
 VERSION=$(SQLITEVERSION)$(APSWSUFFIX)
 VERDIR=apsw-$(VERSION)
@@ -21,7 +21,7 @@ GENDOCS = \
 	doc/fts.rst
 
 .PHONY : help all tagpush clean doc docs build_ext build_ext_debug coverage pycoverage test test_debug fulltest linkcheck unwrapped \
-		 publish stubtest showsymbols compile-win setup-wheel source_nocheck source release pydebug pyvalgrind valgrind valgrind1 \
+		 publish stubtest showsymbols compile-win setup-wheel source_nocheck source release pydebug \
 		 fossil doc-depends dev-depends docs-no-fetch compile-win-one langserver
 
 help: ## Show this help
@@ -38,10 +38,10 @@ tagpush: ## Tag with version and push
 clean: ## Cleans up everything
 	$(MAKE) PYTHONPATH="`pwd`" VERSION=$(VERSION) -C doc clean
 	rm -rf dist build work/* megatestresults apsw.egg-info __pycache__ apsw/__pycache__ :memory: .mypy_cache .ropeproject htmlcov "System Volume Information" doc/docdb.json
-	mkdir dist
-	for i in 'vgcore.*' '.coverage' '*.pyc' '*.pyo' '*~' '*.o' '*.so' '*.dll' '*.pyd' '*.gcov' '*.gcda' '*.gcno' '*.orig' '*.tmp' 'testdb*' 'testextension.sqlext' ; do \
+	for i in 'vgcore.*' '.coverage*' '*.pyc' '*.pyo' '*~' '*.o' '*.so' '*.dll' '*.pyd' '*.gcov' '*.gcda' '*.gcno' '*.orig' '*.tmp' 'testdb*' 'testextension.sqlext' ; do \
 		find . -type f -name "$$i" -print0 | xargs -0 --no-run-if-empty rm -f ; done
 	rm -f doc/typing.rstgen doc/example.rst doc/example-fts.rst doc/renames.rstgen $(GENDOCS)
+	rm -f compile_commands.json setup.apsw work
 	-rm -rf sqlite3/
 
 doc: docs ## Builds all the doc
@@ -51,7 +51,7 @@ docs: build_ext docs-no-fetch
 docs-no-fetch: $(GENDOCS) doc/example.rst doc/example-fts.rst doc/.static doc/typing.rstgen doc/renames.rstgen
 	rm -f testdb
 	env PYTHONPATH=. $(PYTHON) tools/docmissing.py
-	env PYTHONPATH=. $(PYTHON) tools/docupdate.py $(VERSION)
+	env PYTHONPATH=. $(PYTHON) tools/docupdate.py $(VERSION) $(RELEASEDATE)
 	$(MAKE) PYTHONPATH="`pwd`" VERSION=$(VERSION) RELEASEDATE=$(RELEASEDATE) -C doc clean html
 	tools/spellcheck.sh
 	rst2html5 --strict --verbose --exit-status 1 README.rst >/dev/null
@@ -227,7 +227,8 @@ source_nocheck: src/apswversion.h
 	test "`git branch --show-current`" = master
 	find . -depth -name '.*cache' -type d -exec rm -r "{}" \;
 	env APSW_NO_GA=t $(MAKE) doc
-	rm -rf doc/build/html/_static/fonts/ doc/build/html/_static/css/fonts/
+	rm -rf doc/build/html/_static/fonts/ doc/build/html/_static/css/fonts/ doc/build/apsw.1
+	rst2man doc/cli.rst doc/build/apsw.1
 	$(PYTHON) setup.py sdist --formats zip --add-doc
 
 source: source_nocheck # Make the source and then check it builds and tests correctly.  This will catch missing files etc
@@ -235,7 +236,7 @@ source: source_nocheck # Make the source and then check it builds and tests corr
 	rm -rf work/$(VERDIR)
 	cd work ; unzip -q ../dist/$(VERDIR).zip
 # Make certain various files do/do not exist
-	for f in doc/vfs.html doc/_sources/pysqlite.txt apsw/trace.py src/faultinject.h; do test -f work/$(VERDIR)/$$f ; done
+	for f in man/cli.1 doc/vfs.html doc/_sources/pysqlite.txt apsw/trace.py src/faultinject.h; do test -f work/$(VERDIR)/$$f ; done
 	for f in sqlite3.c sqlite3/sqlite3.c debian/control ; do test ! -f work/$(VERDIR)/$$f ; done
 # Test code works
 	cd work/$(VERDIR) ; $(PYTHON) setup.py fetch --version=$(SQLITEVERSION) --all build_ext --inplace --enable-all-extensions build_test_extension test
@@ -255,8 +256,6 @@ PYDEBUG_VER=3.12.7
 PYDEBUG_DIR=/space/pydebug
 PYTHREAD_VER=$(PYDEBUG_VER)
 PYTHREAD_DIR=/space/pythread
-PYVALGRIND_VER=$(PYDEBUG_VER)
-PYVALGRIND_DIR=/space/pyvalgrind
 # This must end in slash
 PYDEBUG_WORKDIR=/space/apsw-test/
 
@@ -276,29 +275,6 @@ pythread: ## Build a debug python including thread sanitizer.  Extensions it bui
 	env CFLAGS=-fsanitize=thread LDFLAGS=-fsanitize=thread TSAN_OPTIONS=report_bugs=0 ./configure  --without-pymalloc --with-pydebug --prefix="$(PYTHREAD_DIR)" --without-freelists  && \
 	$(MAKE) -j install
 	$(MAKE) dev-depends PYTHON=$(PYTHREAD_DIR)/bin/python3
-
-pyvalgrind: ## Build a debug python with valgrind integration
-	set -x && cd "$(PYVALGRIND_DIR)" && find . -delete && \
-	curl https://www.python.org/ftp/python/`echo $(PYVALGRIND_VER) | sed 's/[abr].*//'`/Python-$(PYVALGRIND_VER).tar.xz | tar xfJ - && \
-	cd Python-$(PYVALGRIND_VER) && \
-	./configure --with-valgrind --without-pymalloc  --with-pydebug --prefix="$(PYVALGRIND_DIR)" \
-	--without-freelists --with-assertions && \
-	$(MAKE) -j install
-	$(MAKE) dev-depends PYTHON=$(PYVALGRIND_DIR)/bin/python3
-
-
-valgrind: $(PYVALGRIND_DIR)/bin/python3 src/faultinject.h ## Runs multiple iterations with valgrind to catch leaks
-	$(PYVALGRIND_DIR)/bin/python3 setup.py fetch --version=$(SQLITEVERSION) --all && \
-	  env APSWTESTPREFIX=$(PYDEBUG_WORKDIR) PATH=$(PYVALGRIND_DIR)/bin:$$PATH APSW_TEST_ITERATIONS=6 tools/valgrind.sh 2>&1 | tee l6 && \
-	  env APSWTESTPREFIX=$(PYDEBUG_WORKDIR) PATH=$(PYVALGRIND_DIR)/bin:$$PATH APSW_TEST_ITERATIONS=7 tools/valgrind.sh 2>&1 | tee l7 && \
-	  env APSWTESTPREFIX=$(PYDEBUG_WORKDIR) PATH=$(PYVALGRIND_DIR)/bin:$$PATH APSW_TEST_ITERATIONS=8 tools/valgrind.sh 2>&1 | tee l8
-
-valgrind1: $(PYVALGRIND_DIR)/bin/python3 src/faultinject.h ## valgrind check (one iteration)
-	$(PYVALGRIND_DIR)/bin/python3 setup.py fetch --version=$(SQLITEVERSION) --all && \
-	  env APSWTESTPREFIX=$(PYDEBUG_WORKDIR) PATH=$(PYVALGRIND_DIR)/bin:$$PATH APSW_TEST_ITERATIONS=1 tools/valgrind.sh
-
-valgrind_no_fetch: $(PYVALGRIND_DIR)/bin/python3 src/faultinject.h ## valgrind check (one iteration) - does not fetch SQLite, using existing directory
-	  env APSWTESTPREFIX=$(PYDEBUG_WORKDIR) PATH=$(PYVALGRIND_DIR)/bin:$$PATH APSW_TEST_ITERATIONS=1 tools/valgrind.sh
 
 langserver:  ## Language server integration json
 	$(PYTHON) tools/gencompilecommands.py > compile_commands.json

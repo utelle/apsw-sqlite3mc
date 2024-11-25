@@ -17,8 +17,10 @@ def connection_wal(connection: apsw.Connection) -> None:
     `described here <https://www.sqlite.org/wal.html>`__.
     """
     try:
-        connection.pragma("journal_mode", "wal")
+        if not connection.readonly("main"):
+            connection.pragma("journal_mode", "wal")
     except apsw.ReadOnlyError:
+        # journal/wal etc could still be readonly
         pass
 
 
@@ -57,6 +59,7 @@ def connection_dqs(connection: apsw.Connection) -> None:
     connection.config(apsw.SQLITE_DBCONFIG_DQS_DML, 0)
     connection.config(apsw.SQLITE_DBCONFIG_DQS_DDL, 0)
 
+
 def connection_optimize(connection: apsw.Connection) -> None:
     """Enables query planner optimization
 
@@ -74,9 +77,12 @@ def connection_optimize(connection: apsw.Connection) -> None:
     <https://sqlite.org/lang_analyze.html>`__.
     """
     try:
-        connection.pragma("optimize", 0x10002)
+        if not connection.readonly("main"):
+            connection.pragma("optimize", 0x10002)
     except apsw.ReadOnlyError:
+        # journal/wal etc could still be readonly
         pass
+
 
 def connection_recursive_triggers(connection: apsw.Connection) -> None:
     """Recursive triggers are off for historical backwards compatibility
@@ -85,6 +91,7 @@ def connection_recursive_triggers(connection: apsw.Connection) -> None:
     <https://www.sqlite.org/pragma.html#pragma_recursive_triggers>`__.
     """
     connection.pragma("recursive_triggers", "ON")
+
 
 def library_logging() -> None:
     """Forwards SQLite logging to Python logging module
@@ -108,7 +115,7 @@ recommended: tuple[Callable, ...] = (
 
 def apply(which: tuple[Callable, ...]) -> None:
     "Applies library immediately and connection to new connections"
-    hooks : list[Callable] = []
+    hooks: list[Callable] = []
     for func in which:
         if func.__name__.startswith("connection_"):
             hooks.append(func)

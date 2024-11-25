@@ -14,7 +14,8 @@
       to this format (the corresponding params could be "seven", 7, "foo", "bar"
 
 */
-static void AddTraceBackHere(const char *filename, int lineno, const char *functionname, const char *localsformat, ...)
+static void
+AddTraceBackHere(const char *filename, int lineno, const char *functionname, const char *localsformat, ...)
 {
   /* See the implementation of _PyTraceback_Add for a template of what
      this code should do. That method does everything we need, except
@@ -47,11 +48,10 @@ static void AddTraceBackHere(const char *filename, int lineno, const char *funct
     goto end;
 
   /* make the dummy frame */
-  frame = PyFrame_New(
-      PyThreadState_Get(), /* PyThreadState *tstate */
-      code,                /* PyCodeObject *code */
-      empty_dict,          /* PyObject *globals */
-      localargs            /* PyObject *locals */
+  frame = PyFrame_New(PyThreadState_Get(), /* PyThreadState *tstate */
+                      code,                /* PyCodeObject *code */
+                      empty_dict,          /* PyObject *globals */
+                      localargs            /* PyObject *locals */
   );
   if (!frame)
     goto end;
