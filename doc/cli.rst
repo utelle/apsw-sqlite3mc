@@ -6,8 +6,8 @@ apsw
 A terminal interface to the APSW SQLite shell modelled after the SQLite shell
 -----------------------------------------------------------------------------
 
-:version: apsw 3.47.1.0
-:date: 25 November 2024
+:version: apsw 3.47.2.0
+:date: 8 December 2024
 :manual section: 1
 :manual group: General Commands Manual
 
@@ -216,6 +216,9 @@ from SQL.  You can use ``.help`` to see a list of all commands and
     
 ``.pages`` ``SCOPE``
     Shows page usage summary in human units
+    
+``.pages-svg`` ``?OUTFILENAME?``
+    Shows space usage in a graphic
     
 ``.parameter`` ``CMD`` ``...``
     Maintain named bindings you can use in your queries.
@@ -655,6 +658,15 @@ Shows page usage summary in human units
 
 0 - shows the database as a whole. 1 - groups by each table, including its
 indices.  2 - shows each table and index separately.
+
+
+.pages-svg ?OUTFILENAME?
+------------------------
+
+Shows space usage in a graphic
+
+If you do not specify a filename, then a temporary file is created and the
+browser invoked to show it.
 
 
 .parameter CMD ...
