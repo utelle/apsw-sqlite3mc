@@ -67,6 +67,8 @@ API Reference
 
 #define SQLITE_OMIT_DEPRECATED
 
+#define SQLITE_OMIT_SHARED_CACHE
+
 #ifndef SQLITE_MAX_ATTACHED
 #define SQLITE_MAX_ATTACHED 125
 #endif
@@ -94,8 +96,8 @@ API Reference
 #include "sqlite3.h"
 #endif
 
-#if SQLITE_VERSION_NUMBER < 3047001
-#error Your SQLite version is too old.  It must be at least 3.47.1
+#if SQLITE_VERSION_NUMBER < 3048000
+#error Your SQLite version is too old.  It must be at least 3.48.0
 #endif
 
 /* system headers */
@@ -182,6 +184,27 @@ typedef struct
   int init_was_called;
 } ZeroBlobBind;
 
+typedef struct
+{
+  PyObject_HEAD
+  PyObject *object;
+} PyObjectBind;
+
+/* forward reference */
+static PyTypeObject PyObjectBindType;
+
+/* name used in sqlite3 pointer interfaces to identify pointer type */
+#define PYOBJECT_BIND_TAG "apsw-pyobject"
+
+/* destructor for bind/result */
+static void
+pyobject_bind_destructor(void *value)
+{
+  PyGILState_STATE gilstate = PyGILState_Ensure();
+  Py_DECREF((PyObject *)value);
+  PyGILState_Release(gilstate);
+}
+
 static void apsw_write_unraisable(PyObject *hookobject);
 
 /* string constants struct */
@@ -229,6 +252,16 @@ static int allow_missing_dict_bindings = 0;
 #include "constants.c"
 
 /* MODULE METHODS */
+
+/* Although pyobject is marked as a method, it is really a class but
+   we are trying to hide the implementation details as much as possible.
+*/
+
+/** .. method:: pyobject(object: Any)
+
+  Indicates a Python object is being provided as a
+  :ref:`runtime value <pyobject>`.
+*/
 
 /** .. method:: sqlite_lib_version() -> str
 
@@ -280,20 +313,24 @@ static PyObject *
 enable_shared_cache(PyObject *Py_UNUSED(self), PyObject *const *fast_args, Py_ssize_t fast_nargs,
                     PyObject *fast_kwnames)
 {
-  int enable = 0, res;
+  int enable = 0;
   {
     Apsw_enable_shared_cache_CHECK;
     ARG_PROLOG(1, Apsw_enable_shared_cache_KWNAMES);
     ARG_MANDATORY ARG_bool(enable);
     ARG_EPILOG(NULL, Apsw_enable_shared_cache_USAGE, );
   }
-  res = sqlite3_enable_shared_cache(enable);
+#ifdef SQLITE_OMIT_SHARED_CACHE
+  return PyErr_Format(PyExc_Exception, "sqlite3_enable_shared_cache has been omitted");
+#else
+  int res = sqlite3_enable_shared_cache(enable);
   SET_EXC(res, NULL);
 
   if (res != SQLITE_OK)
     return NULL;
 
   Py_RETURN_NONE;
+#endif
 }
 
 /** .. method:: connections() -> list[Connection]
@@ -1253,9 +1290,10 @@ fail:
     :type: tuple[str, ...]
 
     A tuple of the options used to compile SQLite.  For example it
-    will be something like this::
+    will be something like this, but with around 50 entries::
 
-        ('ENABLE_LOCKING_STYLE=0', 'TEMP_STORE=1', 'THREADSAFE=1')
+        ('ENABLE_LOCKING_STYLE=0', 'TEMP_STORE=1', 'THREADSAFE=1', 'ENABLE_FTS5',
+         'OMIT_SHARED_CACHE', 'SYSTEM_MALLOC')
 
     -* sqlite3_compileoption_get
 */
@@ -1847,7 +1885,8 @@ PyInit_apsw(void)
       || PyType_Ready(&apswfcntl_pragma_Type) < 0 || PyType_Ready(&APSWURIFilenameType) < 0
       || PyType_Ready(&FunctionCBInfoType) < 0 || PyType_Ready(&APSWBackupType) < 0
       || PyType_Ready(&SqliteIndexInfoType) < 0 || PyType_Ready(&apsw_no_change_object) < 0
-      || PyType_Ready(&APSWFTS5TokenizerType) < 0 || PyType_Ready(&APSWFTS5ExtensionAPIType) < 0)
+      || PyType_Ready(&APSWFTS5TokenizerType) < 0 || PyType_Ready(&APSWFTS5ExtensionAPIType) < 0
+      || PyType_Ready(&PyObjectBindType) < 0)
     goto fail;
 
   /* PyStructSequence_NewType is broken in some Pythons
@@ -1900,6 +1939,7 @@ PyInit_apsw(void)
   ADD(IndexInfo, SqliteIndexInfoType);
   ADD(FTS5Tokenizer, APSWFTS5TokenizerType);
   ADD(FTS5ExtensionApi, APSWFTS5ExtensionAPIType);
+  ADD(pyobject, PyObjectBindType);
 #undef ADD
 
   /** .. attribute:: connection_hooks

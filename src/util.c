@@ -296,6 +296,9 @@ convert_value_to_pyobject(sqlite3_value *value, int in_constraint_possible, int 
       Py_XDECREF(set);
       return NULL;
     }
+    void *pointer = sqlite3_value_pointer(value, PYOBJECT_BIND_TAG);
+    if (pointer)
+      return Py_NewRef((PyObject *)pointer);
     Py_RETURN_NONE;
 
   case SQLITE_BLOB:
@@ -311,7 +314,7 @@ convert_value_to_pyobject_not_in(sqlite3_value *value)
 
 /* Converts column to PyObject.  Returns a new reference. Almost identical to above
    but we cannot just use sqlite3_column_value and then call the above function as
-   SQLite doesn't allow that ("unprotected values") */
+   SQLite doesn't allow that ("unprotected values") and assertion failure */
 #undef convert_column_to_pyobject
 static PyObject *
 convert_column_to_pyobject(sqlite3_stmt *stmt, int col)
@@ -342,8 +345,13 @@ convert_column_to_pyobject(sqlite3_stmt *stmt, int col)
   }
 
   default:
-  case SQLITE_NULL:
+  case SQLITE_NULL: {
+    void *pointer;
+    _PYSQLITE_CALL_V(pointer = sqlite3_value_pointer(sqlite3_column_value(stmt, col), PYOBJECT_BIND_TAG));
+    if (pointer)
+      return Py_NewRef((PyObject *)pointer);
     Py_RETURN_NONE;
+  }
 
   case SQLITE_BLOB: {
     const void *data;

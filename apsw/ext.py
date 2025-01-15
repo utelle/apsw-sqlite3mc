@@ -28,6 +28,8 @@ import apsw
 import apsw.unicode
 import sys
 
+NoneType = types.NoneType if sys.version_info > (3, 10) else type(None)
+
 
 def result_string(code: int) -> str:
     """Turns a result or extended result code into a string.
@@ -1391,7 +1393,7 @@ def format_query_table(
     *,
     colour: bool = False,
     quote: bool = False,
-    string_sanitize: Union[Callable[[str], str], Union[Literal[0], Literal[1], Literal[2]]] = 0,
+    string_sanitize: Callable[[str], str] | Literal[0] | Literal[1] | Literal[2] = 0,
     binary: Callable[[bytes], str] = lambda x: f"[ { len(x) } bytes ]",
     null: str = "(null)",
     truncate: int = 4096,
@@ -1489,7 +1491,7 @@ def _format_table(
     rows: list[apsw.SQLiteValues],
     colour: bool,
     quote: bool,
-    string_sanitize: Union[Callable[[str], str], Union[Literal[0], Literal[1], Literal[2]]],
+    string_sanitize: Callable[[str], str] | Literal[0] | Literal[1] | Literal[2],
     binary: Callable[[bytes], str],
     null: str,
     truncate: int,
@@ -1516,20 +1518,25 @@ def _format_table(
             # magenta
             "number_start": c(35),
             "number_end": c(39),
+            # green
+            "pyobject_start": c(32),
+            "pyobject_end": c(39),
         }
 
         def colour_wrap(text: str, kind: type | None, header: bool = False) -> str:
             if header:
                 return colours["header_start"] + text + colours["header_end"]
-            if kind == str:
+            if kind is str:
                 tkind = "string"
-            elif kind == bytes:
+            elif kind is bytes:
                 tkind = "blob"
             elif kind in (int, float):
                 tkind = "number"
-            else:
+            elif kind is NoneType:
                 tkind = "null"
-            return colours[tkind + "_start"] + text + colours[tkind + "_end"]
+            else:
+                tkind = "pyobject"
+            return colours[f"{tkind}_start"] + text + colours[f"{tkind}_end"]
 
     else:
         colours = {}
@@ -1575,7 +1582,10 @@ def _format_table(
 
                         cell = re.sub(".", repl, cell)
             if quote:
-                val = apsw.format_sql_value(cell)
+                if isinstance(cell, (NoneType, str, float, int, bytes)):
+                    val = apsw.format_sql_value(cell)
+                else:
+                    val = repr(cell)
             else:
                 if isinstance(cell, str):
                     val = cell
@@ -1583,12 +1593,14 @@ def _format_table(
                     val = str(cell)
                 elif isinstance(cell, bytes):
                     val = binary(cell)
-                else:
+                elif cell is None:
                     val = null
+                else:
+                    val = str(cell)
             assert isinstance(val, str), f"expected str not { val!r}"
 
             # cleanup lines
-            lines = []
+            lines: list[str] = []
             for line in apsw.unicode.split_lines(val):
                 if apsw.unicode.text_width(line) < 0:
                     line = "".join((c if apsw.unicode.text_width(c) >= 0 else "?") for c in line)

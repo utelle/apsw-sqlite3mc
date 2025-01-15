@@ -160,9 +160,10 @@ apswversion = apsw_version ## OLD-NAME
 
 compile_options: tuple[str, ...]
 """A tuple of the options used to compile SQLite.  For example it
-will be something like this::
+will be something like this, but with around 50 entries::
 
-    ('ENABLE_LOCKING_STYLE=0', 'TEMP_STORE=1', 'THREADSAFE=1')
+    ('ENABLE_LOCKING_STYLE=0', 'TEMP_STORE=1', 'THREADSAFE=1', 'ENABLE_FTS5',
+     'OMIT_SHARED_CACHE', 'SYSTEM_MALLOC')
 
 Calls: `sqlite3_compileoption_get <https://sqlite.org/c3ref/compileoption_get.html>`__"""
 
@@ -346,6 +347,11 @@ no_change: object
 """A sentinel value used to indicate no change in a value when
 used with :meth:`VTCursor.ColumnNoChange` and
 :meth:`VTTable.UpdateChangeRow`"""
+
+def pyobject(object: Any):
+    """Indicates a Python object is being provided as a
+    :ref:`runtime value <pyobject>`."""
+    ...
 
 def randomness(amount: int)  -> bytes:
     """Gets random data from SQLite's random number generator.
@@ -2029,7 +2035,8 @@ class Cursor:
         :param statements: One or more SQL statements such as ``select *
           from books`` or ``begin; insert into books ...; select
           last_insert_rowid(); end``.
-        :param bindings: If supplied should either be a sequence or a dictionary.  Each item must be one of the :ref:`supported types <types>`
+        :param bindings: If supplied should either be a sequence or a dictionary.  Each item must be one of the :ref:`supported types <types>`,
+          :class:`zeroblob`, or a wrapped :ref:`Python object <pyobject>`
         :param can_cache: If False then the statement cache will not be used to find an already prepared query, nor will it be
           placed in the cache after execution
         :param prepare_flags: `flags <https://sqlite.org/c3ref/c_prepare_normalize.html>`__ passed to
@@ -2049,7 +2056,8 @@ class Cursor:
           * `sqlite3_bind_text64 <https://sqlite.org/c3ref/bind_blob.html>`__
           * `sqlite3_bind_double <https://sqlite.org/c3ref/bind_blob.html>`__
           * `sqlite3_bind_blob64 <https://sqlite.org/c3ref/bind_blob.html>`__
-          * `sqlite3_bind_zeroblob <https://sqlite.org/c3ref/bind_blob.html>`__"""
+          * `sqlite3_bind_zeroblob <https://sqlite.org/c3ref/bind_blob.html>`__
+          * `sqlite3_stmt_explain <https://sqlite.org/c3ref/stmt_explain.html>`__"""
         ...
 
     def executemany(self, statements: str, sequenceofbindings: Iterable[Bindings], *, can_cache: bool = True, prepare_flags: int = 0, explain: int = -1) -> Cursor:
@@ -3762,6 +3770,8 @@ SQLITE_FCNTL_LOCK_TIMEOUT: int = 34
 """For `Standard File Control Opcodes <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html>'__"""
 SQLITE_FCNTL_MMAP_SIZE: int = 18
 """For `Standard File Control Opcodes <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html>'__"""
+SQLITE_FCNTL_NULL_IO: int = 43
+"""For `Standard File Control Opcodes <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html>'__"""
 SQLITE_FCNTL_OVERWRITE: int = 11
 """For `Standard File Control Opcodes <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html>'__"""
 SQLITE_FCNTL_PDB: int = 30
@@ -4078,12 +4088,14 @@ SQLITE_PERM: int = 3
 """For `Result Codes <https://sqlite.org/rescode.html>'__"""
 SQLITE_PRAGMA: int = 19
 """For `Authorizer Action Codes <https://sqlite.org/c3ref/c_alter_table.html>'__"""
+SQLITE_PREPARE_DONT_LOG: int = 16
+"""For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_dont_log.html>'__"""
 SQLITE_PREPARE_NORMALIZE: int = 2
-"""For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_normalize.html>'__"""
+"""For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_dont_log.html>'__"""
 SQLITE_PREPARE_NO_VTAB: int = 4
-"""For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_normalize.html>'__"""
+"""For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_dont_log.html>'__"""
 SQLITE_PREPARE_PERSISTENT: int = 1
-"""For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_normalize.html>'__"""
+"""For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_dont_log.html>'__"""
 SQLITE_PROTOCOL: int = 15
 """For `Result Codes <https://sqlite.org/rescode.html>'__"""
 SQLITE_RANGE: int = 25
@@ -4365,14 +4377,14 @@ SQLITE_FCNTL_EXTERNAL_READER SQLITE_FCNTL_FILE_POINTER
 SQLITE_FCNTL_GET_LOCKPROXYFILE SQLITE_FCNTL_HAS_MOVED
 SQLITE_FCNTL_JOURNAL_POINTER SQLITE_FCNTL_LAST_ERRNO
 SQLITE_FCNTL_LOCKSTATE SQLITE_FCNTL_LOCK_TIMEOUT
-SQLITE_FCNTL_MMAP_SIZE SQLITE_FCNTL_OVERWRITE SQLITE_FCNTL_PDB
-SQLITE_FCNTL_PERSIST_WAL SQLITE_FCNTL_POWERSAFE_OVERWRITE
-SQLITE_FCNTL_PRAGMA SQLITE_FCNTL_RBU SQLITE_FCNTL_RESERVE_BYTES
-SQLITE_FCNTL_RESET_CACHE SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE
-SQLITE_FCNTL_SET_LOCKPROXYFILE SQLITE_FCNTL_SIZE_HINT
-SQLITE_FCNTL_SIZE_LIMIT SQLITE_FCNTL_SYNC SQLITE_FCNTL_SYNC_OMITTED
-SQLITE_FCNTL_TEMPFILENAME SQLITE_FCNTL_TRACE SQLITE_FCNTL_VFSNAME
-SQLITE_FCNTL_VFS_POINTER SQLITE_FCNTL_WAL_BLOCK
+SQLITE_FCNTL_MMAP_SIZE SQLITE_FCNTL_NULL_IO SQLITE_FCNTL_OVERWRITE
+SQLITE_FCNTL_PDB SQLITE_FCNTL_PERSIST_WAL
+SQLITE_FCNTL_POWERSAFE_OVERWRITE SQLITE_FCNTL_PRAGMA SQLITE_FCNTL_RBU
+SQLITE_FCNTL_RESERVE_BYTES SQLITE_FCNTL_RESET_CACHE
+SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE SQLITE_FCNTL_SET_LOCKPROXYFILE
+SQLITE_FCNTL_SIZE_HINT SQLITE_FCNTL_SIZE_LIMIT SQLITE_FCNTL_SYNC
+SQLITE_FCNTL_SYNC_OMITTED SQLITE_FCNTL_TEMPFILENAME SQLITE_FCNTL_TRACE
+SQLITE_FCNTL_VFSNAME SQLITE_FCNTL_VFS_POINTER SQLITE_FCNTL_WAL_BLOCK
 SQLITE_FCNTL_WIN32_AV_RETRY SQLITE_FCNTL_WIN32_GET_HANDLE
 SQLITE_FCNTL_WIN32_SET_HANDLE SQLITE_FCNTL_ZIPVFS"""
 
@@ -4428,10 +4440,10 @@ SQLITE_OPEN_WAL"""
 
 mapping_prepare_flags: dict[str | int, int | str]
 """Prepare Flags mapping names to int and int to names.
-Doc at https://sqlite.org/c3ref/c_prepare_normalize.html
+Doc at https://sqlite.org/c3ref/c_prepare_dont_log.html
 
-SQLITE_PREPARE_NORMALIZE SQLITE_PREPARE_NO_VTAB
-SQLITE_PREPARE_PERSISTENT"""
+SQLITE_PREPARE_DONT_LOG SQLITE_PREPARE_NORMALIZE
+SQLITE_PREPARE_NO_VTAB SQLITE_PREPARE_PERSISTENT"""
 
 mapping_result_codes: dict[str | int, int | str]
 """Result Codes mapping names to int and int to names.

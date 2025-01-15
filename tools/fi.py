@@ -95,7 +95,6 @@ def exercise(example_code, expect_exception):
     apsw.soft_heap_limit(1_000_000_000)
     apsw.hard_heap_limit(1_000_000_000)
     apsw.randomness(32)
-    apsw.enable_shared_cache(False)
     apsw.release_memory(1024)
     apsw.exception_for(3)
     try:
@@ -715,9 +714,9 @@ class Tester:
                 self.expect_exception.append(MemoryError)
                 return 0
 
-            # we only use this to get fts5api and always claim it was because fts5
+            # we use this to get fts5api and always claim it was because fts5
             # is not present
-            if fname in {"sqlite3_prepare", "sqlite3_bind_pointer"}:
+            if fname in {"sqlite3_prepare", "sqlite3_bind_pointer"} and "fts.c" in key[1]:
                 self.expect_exception.append(apsw_attr("NoFTS5Error"))
                 return self.apsw_attr("SQLITE_ERROR")
 

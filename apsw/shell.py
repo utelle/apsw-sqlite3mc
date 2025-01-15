@@ -3268,7 +3268,7 @@ Enter ".help" for instructions
 
     def _get_prev_tokens(self, line, end):
         "Returns the tokens prior to pos end in the line"
-        return re.findall(r'"?\w+"?', line[:end])
+        return re.findall(r'"?[\-\w]+"?', line[:end])
 
     def complete_sql(self, line, token, beg, end):
         """Provide some completions for SQL
@@ -3419,7 +3419,9 @@ Enter ".help" for instructions
         """
         if not self._builtin_commands:
             self._builtin_commands = [
-                "." + x[len("command_") :] for x in dir(self) if x.startswith("command_") and x != "command_headers"
+                "." + x[len("command_") :].replace("_", "-")
+                for x in dir(self)
+                if x.startswith("command_") and x != "command_headers"
             ]
 
         t = self._get_prev_tokens(line, end)
@@ -3536,8 +3538,10 @@ Enter ".help" for instructions
                 return self.vstring + formatted + self.vstring_
             if isinstance(val, bytes):
                 return self.vblob + formatted + self.vblob_
-            # must be a number - we don't distinguish between float/int
-            return self.vnumber + formatted + self.vnumber_
+            if isinstance(val, (int, float)):
+                return self.vnumber + formatted + self.vnumber_
+            # must be pyobject
+            return self.vpyobject + formatted + self.vpyobject_
 
     # The colour definitions - the convention is the name to turn
     # something on and the name with an underscore suffix to turn it
@@ -3600,6 +3604,8 @@ Enter ".help" for instructions
         vblob_=d.fg_,
         vnumber=d.fg_magenta,
         vnumber_=d.fg_,
+        vpyobject=d.fg_green,
+        vpyobject_=d.fg_,
     )
     # unpollute namespace
     del d
