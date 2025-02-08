@@ -869,17 +869,9 @@ class mc_build_ext(apsw_build_ext):
         # amalgamation.  run it here.  msvc doesn't have compiler nor
         # would configure run anyway
         if hasattr(self.compiler, "compiler"):
-            proc = subprocess.run(["env", f"CC={shlex.join(self.compiler.compiler)}",
-                                "./configure"], text=True,
-                                capture_output=True, cwd="sqlite3/configure/")
-            if proc.returncode == 0:
-                for line in open("sqlite3/configure/Makefile"):
-                    if line.startswith("DEFS ="):
-                        for part in  shlex.split(line):
-                            if part.startswith("-DHAVE"):
-                                parts = part.split("=", 1)
-                                ext.define_macros.append((parts[0][2:], parts[1]))
-                        break
+            subprocess.check_call(["env", f"CC={shlex.join(self.compiler.compiler)}",
+                                   "./configure"], cwd="sqlite3/configure")
+            shutil.copyfile("sqlite3/configure/sqlite_cfg.h", "sqlite3/sqlite_cfg.h")
 
         # We always want temp store in memory and secure delete
         ext.define_macros.append(("SQLITE_TEMP_STORE", "2"))
