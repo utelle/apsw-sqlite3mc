@@ -48,7 +48,7 @@ functions_not_used = (
     "sqlite3_create_function",
     "sqlite3_create_module",
     "sqlite3_database_file_object",
-    "sqlite3_err(code|str)",
+    "sqlite3_errcode",
     "sqlite3_filename_database",
     "sqlite3_free_(filename|table)",
     "sqlite3_(get|set)_(auxdata|clientdata|table)",
@@ -62,6 +62,8 @@ functions_not_used = (
     "sqlite3_prepare(|_v2)",
     "sqlite3_preupdate_.*",
     "sqlite3_(snprintf|vmprintf|vsnprintf)",
+    # v2 should be used
+    "sqlite3changeset_apply(|_strm)",
     # try should be used not enter
     "sqlite3_mutex_(alloc|enter|free|notheld)",
     "sqlite3_next_stmt",
@@ -91,6 +93,8 @@ functions_special = (
 
 # these do not have a per database mutex
 functions_global = (
+    "sqlite3session_.*",
+    "sqlite3_errstr",
     "sqlite3_libversion",
     "sqlite3_libversion_number",
     "sqlite3_compileoption_.*",
@@ -111,6 +115,7 @@ functions_global = (
     "sqlite3_open_v2",
     "sqlite3_randomness",
     "sqlite3_release_memory",
+    "sqlite3_setlk_timeout", # operates on db, but does not take a mutex
     "sqlite3_shutdown",
     "sqlite3_sleep",
     "sqlite3_soft_heap_limit64",
@@ -149,6 +154,9 @@ functions_global = (
     "sqlite3_db_mutex",
     "sqlite3_mutex_held",
     "sqlite3_mutex_(try|leave)",
+    # session extension
+    "sqlite3change(group|set)_.*",
+    "sqlite3rebaser_.*",
 )
 
 # name pattern, number of args, how to get sqlite3* ideally avoiding

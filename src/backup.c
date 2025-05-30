@@ -118,8 +118,9 @@ APSWBackup_close_internal(APSWBackup *self, int force)
 }
 
 static void
-APSWBackup_dealloc(APSWBackup *self)
+APSWBackup_dealloc(PyObject *self_)
 {
+  APSWBackup *self = (APSWBackup *)self_;
   APSW_CLEAR_WEAKREFS;
 
   if (self->backup)
@@ -131,7 +132,7 @@ APSWBackup_dealloc(APSWBackup *self)
   }
   Py_CLEAR(self->done);
 
-  Py_TpFree((PyObject *)self);
+  Py_TpFree(self_);
 }
 
 /** .. method:: step(npages: int = -1) -> bool
@@ -152,8 +153,9 @@ APSWBackup_dealloc(APSWBackup *self)
   -* sqlite3_backup_step
 */
 static PyObject *
-APSWBackup_step(APSWBackup *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBackup_step(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBackup *self = (APSWBackup *)self_;
   int npages = -1, res;
 
   CHECK_BACKUP_CLOSED(NULL);
@@ -206,8 +208,9 @@ APSWBackup_step(APSWBackup *self, PyObject *const *fast_args, Py_ssize_t fast_na
   -* sqlite3_backup_finish
 */
 static PyObject *
-APSWBackup_finish(APSWBackup *self)
+APSWBackup_finish(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
+  APSWBackup *self = (APSWBackup *)self_;
   int setexc;
 
   /* We handle CHECK_BACKUP_CLOSED internally */
@@ -233,8 +236,9 @@ APSWBackup_finish(APSWBackup *self)
   :param force: If true then any exceptions are ignored.
 */
 static PyObject *
-APSWBackup_close(APSWBackup *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBackup_close(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBackup *self = (APSWBackup *)self_;
   int force = 0, setexc;
 
   /* We handle CHECK_BACKUP_CLOSED internally */
@@ -266,9 +270,9 @@ APSWBackup_close(APSWBackup *self, PyObject *const *fast_args, Py_ssize_t fast_n
   -* sqlite3_backup_remaining
 */
 static PyObject *
-APSWBackup_get_remaining(APSWBackup *self, void *Py_UNUSED(ignored))
+APSWBackup_get_remaining(PyObject *self_, void *Py_UNUSED(ignored))
 {
-
+  APSWBackup *self = (APSWBackup *)self_;
   return PyLong_FromLong(self->backup ? sqlite3_backup_remaining(self->backup) : 0);
 }
 
@@ -283,9 +287,9 @@ APSWBackup_get_remaining(APSWBackup *self, void *Py_UNUSED(ignored))
   -* sqlite3_backup_pagecount
 */
 static PyObject *
-APSWBackup_get_page_count(APSWBackup *self, void *Py_UNUSED(ignored))
+APSWBackup_get_page_count(PyObject *self_, void *Py_UNUSED(ignored))
 {
-
+  APSWBackup *self = (APSWBackup *)self_;
   return PyLong_FromLong(self->backup ? sqlite3_backup_pagecount(self->backup) : 0);
 }
 
@@ -297,12 +301,12 @@ APSWBackup_get_page_count(APSWBackup *self, void *Py_UNUSED(ignored))
   is :meth:`finished <Backup.finish>`.
 */
 static PyObject *
-APSWBackup_enter(APSWBackup *self)
+APSWBackup_enter(PyObject *self_, PyObject *Py_UNUSED(ignored))
 {
-
+  APSWBackup *self = (APSWBackup *)self_;
   CHECK_BACKUP_CLOSED(NULL);
 
-  return Py_NewRef((PyObject *)self);
+  return Py_NewRef(self_);
 }
 
 /** .. method:: __exit__(etype: Optional[type[BaseException]], evalue: Optional[BaseException], etraceback: Optional[types.TracebackType]) -> Optional[bool]
@@ -311,8 +315,9 @@ APSWBackup_enter(APSWBackup *self)
   that the copy is :meth:`finished <Backup.finish>`.
 */
 static PyObject *
-APSWBackup_exit(APSWBackup *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBackup_exit(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBackup *self = (APSWBackup *)self_;
   PyObject *etype, *evalue, *etraceback;
   int setexc;
 
@@ -347,8 +352,9 @@ APSWBackup_exit(APSWBackup *self, PyObject *const *fast_args, Py_ssize_t fast_na
 }
 
 static PyObject *
-APSWBackup_tp_str(APSWBackup *self)
+APSWBackup_tp_str(PyObject *self_)
 {
+  APSWBackup *self = (APSWBackup *)self_;
   return PyUnicode_FromFormat("<apsw.Backup object from %S to %S at %p>",
                               self->source ? (PyObject *)self->source : apst.closed,
                               self->dest ? (PyObject *)self->dest : apst.closed, self);
@@ -367,10 +373,10 @@ static PyMemberDef backup_members[] = {
 
 static PyGetSetDef backup_getset[] = {
   /* name getter setter doc closure */
-  { "remaining", (getter)APSWBackup_get_remaining, NULL, Backup_remaining_DOC, NULL },
-  { "page_count", (getter)APSWBackup_get_page_count, NULL, Backup_page_count_DOC, NULL },
+  { "remaining", APSWBackup_get_remaining, NULL, Backup_remaining_DOC, NULL },
+  { "page_count", APSWBackup_get_page_count, NULL, Backup_page_count_DOC, NULL },
 #ifndef APSW_OMIT_OLD_NAMES
-  { Backup_page_count_OLDNAME, (getter)APSWBackup_get_page_count, NULL, Backup_page_count_OLDDOC, NULL },
+  { Backup_page_count_OLDNAME, APSWBackup_get_page_count, NULL, Backup_page_count_OLDDOC, NULL },
 #endif
   { 0, 0, 0, 0, 0 }
 };
@@ -386,12 +392,12 @@ static PyMethodDef backup_methods[]
 static PyTypeObject APSWBackupType = {
   PyVarObject_HEAD_INIT(NULL, 0).tp_name = "apsw.Backup",
   .tp_basicsize = sizeof(APSWBackup),
-  .tp_dealloc = (destructor)APSWBackup_dealloc,
+  .tp_dealloc = APSWBackup_dealloc,
   .tp_flags = Py_TPFLAGS_DEFAULT,
   .tp_doc = Backup_class_DOC,
   .tp_weaklistoffset = offsetof(APSWBackup, weakreflist),
   .tp_methods = backup_methods,
   .tp_members = backup_members,
   .tp_getset = backup_getset,
-  .tp_str = (reprfunc)APSWBackup_tp_str,
+  .tp_str = APSWBackup_tp_str,
 };

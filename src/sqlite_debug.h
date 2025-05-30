@@ -376,9 +376,6 @@
     sqlite3_error_offset((one));                         \
 })
 
-#undef sqlite3_errstr
-#define sqlite3_errstr *not used*
-
 #define sqlite3_exec(one, two, three, four, five) ({      \
     assert (sqlite3_mutex_held(sqlite3_db_mutex(one)));   \
     sqlite3_exec((one), (two), (three), (four), (five));  \
@@ -843,6 +840,12 @@
 
 #undef sqlite3_win32_set_directory8
 #define sqlite3_win32_set_directory8 *not used*
+
+#undef sqlite3changeset_apply
+#define sqlite3changeset_apply *not used*
+
+#undef sqlite3changeset_apply_strm
+#define sqlite3changeset_apply_strm *not used*
 
 
 #endif

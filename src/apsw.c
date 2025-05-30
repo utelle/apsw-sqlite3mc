@@ -27,9 +27,9 @@ Type Annotations
 ================
 
 Comprehensive :mod:`type annotations <typing>` :source:`are included
-<apsw/__init__.pyi>`, and your code can be checked using tools like
-`mypy <https://mypy-lang.org/>`__.  You can refer to the types below
-for your annotations (eg as :class:`apsw.SQLiteValue`)
+<apsw/__init__.pyi>`, and your code can be checked by your editor or
+tools like `mypy <https://mypy-lang.org/>`__.  You can refer to the
+types below for your annotations (eg as :class:`apsw.SQLiteValue`)
 
 Your source files should include::
 
@@ -59,6 +59,13 @@ API Reference
 #include "sqlite3config.h"
 #endif
 
+/* session requires pre-update hook and you get weird things if session is defined but not the hook */
+#ifdef SQLITE_ENABLE_SESSION
+#ifndef SQLITE_ENABLE_PREUPDATE_HOOK
+#define SQLITE_ENABLE_PREUPDATE_HOOK
+#endif
+#endif
+
 /* SQLite amalgamation */
 #ifdef APSW_USE_SQLITE_AMALGAMATION
 
@@ -72,6 +79,10 @@ API Reference
 
 #ifndef SQLITE_MAX_MMAP_SIZE
 #define SQLITE_MAX_MMAP_SIZE 0x1000000000000LL
+#endif
+
+#ifndef SQLITE_ENABLE_SETLK_TIMEOUT
+#define SQLITE_ENABLE_SETLK_TIMEOUT 1
 #endif
 
 #ifndef SQLITE_DEBUG
@@ -143,11 +154,6 @@ MakeExistingException(void)
   } while (0)
 
 static int APSW_Should_Fault(const char *);
-
-/* Are we doing 64 bit? - _LP64 is best way I can find as sizeof isn't valid in cpp #if */
-#if defined(_LP64) && _LP64
-#define APSW_TEST_LARGE_OBJECTS
-#endif
 
 #else /* APSW_FAULT_INJECT */
 #define APSW_FAULT(faultName, good, bad)                                                                               \
@@ -241,6 +247,11 @@ static int allow_missing_dict_bindings = 0;
 /* virtual file system */
 #include "vfs.c"
 
+/* session extension */
+#ifdef SQLITE_ENABLE_SESSION
+#include "session.c"
+#endif
+
 /* constants */
 #include "constants.c"
 
@@ -266,7 +277,7 @@ static int allow_missing_dict_bindings = 0;
 */
 
 static PyObject *
-get_sqlite_version(void)
+get_sqlite_version(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   return PyUnicode_FromString(sqlite3_libversion());
 }
@@ -280,7 +291,7 @@ get_sqlite_version(void)
 */
 
 static PyObject *
-get_sqlite3_sourceid(void)
+get_sqlite3_sourceid(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   return PyUnicode_FromString(sqlite3_sourceid());
 }
@@ -290,7 +301,7 @@ get_sqlite3_sourceid(void)
   Returns the APSW version.
 */
 static PyObject *
-get_apsw_version(void)
+get_apsw_version(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   return PyUnicode_FromString(APSW_VERSION);
 }
@@ -333,7 +344,7 @@ enable_shared_cache(PyObject *Py_UNUSED(self), PyObject *const *fast_args, Py_ss
 */
 static PyObject *the_connections;
 static PyObject *
-apsw_connections(PyObject *Py_UNUSED(self))
+apsw_connections(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   Py_ssize_t i;
   PyObject *res = PyList_New(0), *item = NULL;
@@ -401,7 +412,7 @@ apsw_connection_add(Connection *con)
 */
 
 static PyObject *
-initialize(void)
+initialize(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   int res;
 
@@ -428,7 +439,7 @@ static void free_fork_checker(void);
 #endif
 
 static PyObject *
-sqliteshutdown(void)
+sqliteshutdown(PyObject *Py_UNUSED(unused1), PyObject *Py_UNUSED(unused2))
 {
   int res;
 
@@ -616,7 +627,7 @@ apsw_config(PyObject *Py_UNUSED(self), PyObject *args)
   -* sqlite3_memory_used
 */
 static PyObject *
-memory_used(void)
+memory_used(PyObject *Py_UNUSED(unused1), PyObject *Py_UNUSED(unused2))
 {
   return PyLong_FromLongLong(sqlite3_memory_used());
 }
@@ -798,7 +809,7 @@ status(PyObject *Py_UNUSED(self), PyObject *const *fast_args, Py_ssize_t fast_na
   -* sqlite3_vfs_find
 */
 static PyObject *
-vfs_names(PyObject *Py_UNUSED(self))
+vfs_names(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   PyObject *result = NULL, *str = NULL;
   int res;
@@ -859,7 +870,7 @@ Pointers are converted using :c:func:`PyLong_FromVoidPtr`.
 -* sqlite3_vfs_find
 */
 static PyObject *
-vfs_details(PyObject *Py_UNUSED(self))
+vfs_details(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   PyObject *result, *dict;
   sqlite3_vfs *vfs = sqlite3_vfs_find(0);
@@ -1001,7 +1012,7 @@ apswcomplete(PyObject *Py_UNUSED(self), PyObject *const *fast_args, Py_ssize_t f
 
 #if defined(APSW_DEBUG) || defined(APSW_FAULT_INJECT)
 static PyObject *
-apsw_fini(PyObject *Py_UNUSED(self))
+apsw_fini(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   fini_apsw_strings();
   Py_RETURN_NONE;
@@ -1483,7 +1494,7 @@ formatsqlvalue(PyObject *Py_UNUSED(self), PyObject *value)
     return strres;
   }
   /* Blob */
-  if (PyBytes_Check(value))
+  if (PyBytes_Check(value) || PyObject_CheckBuffer(value))
   {
     int asrb;
     PyObject *strres;
@@ -1494,7 +1505,7 @@ formatsqlvalue(PyObject *Py_UNUSED(self), PyObject *value)
     const unsigned char *bufferc;
 
     asrb = PyObject_GetBufferContiguous(value, &buffer, PyBUF_SIMPLE);
-    if (asrb == -1)
+    if (asrb != 0)
       return NULL;
 
     strres = PyUnicode_New(buffer.len * 2 + 3, 127);
@@ -1804,13 +1815,13 @@ apsw_getattr(PyObject *Py_UNUSED(module), PyObject *name)
 
 static PyMethodDef module_methods[] = {
   { "sqlite3_sourceid", (PyCFunction)get_sqlite3_sourceid, METH_NOARGS, Apsw_sqlite3_sourceid_DOC },
-  { "sqlite_lib_version", (PyCFunction)get_sqlite_version, METH_NOARGS, Apsw_sqlite_lib_version_DOC },
-  { "apsw_version", (PyCFunction)get_apsw_version, METH_NOARGS, Apsw_apsw_version_DOC },
+  { "sqlite_lib_version", get_sqlite_version, METH_NOARGS, Apsw_sqlite_lib_version_DOC },
+  { "apsw_version", get_apsw_version, METH_NOARGS, Apsw_apsw_version_DOC },
   { "vfs_names", (PyCFunction)vfs_names, METH_NOARGS, Apsw_vfs_names_DOC },
   { "vfs_details", (PyCFunction)vfs_details, METH_NOARGS, Apsw_vfs_details_DOC },
   { "enable_shared_cache", (PyCFunction)enable_shared_cache, METH_FASTCALL | METH_KEYWORDS,
     Apsw_enable_shared_cache_DOC },
-  { "initialize", (PyCFunction)initialize, METH_NOARGS, Apsw_initialize_DOC },
+  { "initialize", initialize, METH_NOARGS, Apsw_initialize_DOC },
   { "shutdown", (PyCFunction)sqliteshutdown, METH_NOARGS, Apsw_shutdown_DOC },
   { "format_sql_value", (PyCFunction)formatsqlvalue, METH_O, Apsw_format_sql_value_DOC },
   { "config", (PyCFunction)apsw_config, METH_VARARGS, Apsw_config_DOC },
@@ -1844,6 +1855,10 @@ static PyMethodDef module_methods[] = {
   { "__getattr__", (PyCFunction)apsw_getattr, METH_O, "module getattr" },
   { "connections", (PyCFunction)apsw_connections, METH_NOARGS, Apsw_connections_DOC },
   { "sleep", (PyCFunction)apsw_sleep, METH_FASTCALL | METH_KEYWORDS, Apsw_sleep_DOC },
+#ifdef SQLITE_ENABLE_SESSION
+  { "session_config", (PyCFunction)apsw_session_config, METH_VARARGS, Apsw_session_config_DOC },
+#endif
+
 #ifndef APSW_OMIT_OLD_NAMES
   { Apsw_sqlite_lib_version_OLDNAME, (PyCFunction)get_sqlite_version, METH_NOARGS, Apsw_sqlite_lib_version_OLDDOC },
   { Apsw_apsw_version_OLDNAME, (PyCFunction)get_apsw_version, METH_NOARGS, Apsw_apsw_version_OLDDOC },
@@ -1887,7 +1902,13 @@ PyInit_apsw(void)
       || PyType_Ready(&FunctionCBInfoType) < 0 || PyType_Ready(&APSWBackupType) < 0
       || PyType_Ready(&SqliteIndexInfoType) < 0 || PyType_Ready(&apsw_no_change_object) < 0
       || PyType_Ready(&APSWFTS5TokenizerType) < 0 || PyType_Ready(&APSWFTS5ExtensionAPIType) < 0
-      || PyType_Ready(&PyObjectBindType) < 0)
+      || PyType_Ready(&PyObjectBindType) < 0
+#ifdef SQLITE_ENABLE_SESSION
+      || PyType_Ready(&APSWSessionType) < 0 || PyType_Ready(&APSWTableChangeType) < 0
+      || PyType_Ready(&APSWChangesetType) < 0 || PyType_Ready(&APSWChangesetBuilderType) < 0
+      || PyType_Ready(&APSWChangesetIteratorType) < 0 || PyType_Ready(&APSWRebaserType) < 0
+#endif
+  )
     goto fail;
 
   /* PyStructSequence_NewType is broken in some Pythons
@@ -1937,6 +1958,13 @@ PyInit_apsw(void)
   ADD(FTS5Tokenizer, APSWFTS5TokenizerType);
   ADD(FTS5ExtensionApi, APSWFTS5ExtensionAPIType);
   ADD(pyobject, PyObjectBindType);
+#ifdef SQLITE_ENABLE_SESSION
+  ADD(Session, APSWSessionType);
+  ADD(Changeset, APSWChangesetType);
+  ADD(ChangesetBuilder, APSWChangesetBuilderType);
+  ADD(TableChange, APSWTableChangeType);
+  ADD(Rebaser, APSWRebaserType);
+#endif
 #undef ADD
 
   /** .. attribute:: connection_hooks
@@ -1993,8 +2021,8 @@ PyInit_apsw(void)
     :type: object
 
     A sentinel value used to indicate no change in a value when
-    used with :meth:`VTCursor.ColumnNoChange` and
-    :meth:`VTTable.UpdateChangeRow`
+    used with :meth:`VTCursor.ColumnNoChange`,
+    :meth:`VTTable.UpdateChangeRow`, and :attr:`TableChange.new`.
   */
 
   if (PyModule_AddObject(m, "no_change", Py_NewRef((PyObject *)&apsw_no_change_object)))

@@ -94,6 +94,9 @@ def do_mappings():
         op.append("")
         op.append("    `" + desc + " <" + consts[desc]["page"] + ">`__ constants")
         op.append("")
+        if map.startswith("mapping_session_"):
+            op.append("    (Only present when :doc:`session extension <session>` is enabled)")
+            op.append("")
 
         vals = m[:]
         vals.sort()
@@ -153,7 +156,10 @@ def do_methods():
         docdb = json.load(open(docdbfilename))
     except Exception:
         docdb = {}
-    docdb[curclass or "apsw"] = methods
+    if not curclass:
+        docdb["apsw"] = docdb.get("apsw", {}) | methods
+    else:
+        docdb[curclass] = methods
     json.dump(docdb, open(docdbfilename, "w"))
     i = "__init__"
     if i in methods:
@@ -223,6 +229,8 @@ def do_methods():
 
         # insert index stuff
         op.extend(indexop)
+        # we need full buffer name
+        dec = re.sub(r"\bBuffer\b", "collections.abc.Buffer", dec)
         # insert classname into dec
         if curclass:
             dec = re.sub(r"^(\.\.\s+(method|attribute)::\s+)()", r"\1" + curclass + ".", dec)

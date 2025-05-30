@@ -1,8 +1,8 @@
 
-SQLITEVERSION=3.49.2
+SQLITEVERSION=3.50.0
 APSWSUFFIX=.0
 
-RELEASEDATE="7 May 2025"
+RELEASEDATE="30 May 2025"
 
 VERSION=$(SQLITEVERSION)$(APSWSUFFIX)
 VERDIR=apsw-$(VERSION)
@@ -17,8 +17,13 @@ GENDOCS = \
 	doc/connection.rst \
 	doc/cursor.rst \
 	doc/apsw.rst \
+	doc/session.rst \
 	doc/backup.rst \
 	doc/fts.rst
+
+GENEXAMPLES = \
+    doc/example-fts.rst \
+	doc/example-session.rst
 
 .PHONY : help all tagpush clean doc docs build_ext build_ext_debug coverage pycoverage test test_debug fulltest linkcheck unwrapped \
 		 publish stubtest showsymbols compile-win setup-wheel source_nocheck source release pydebug \
@@ -40,7 +45,7 @@ clean: ## Cleans up everything
 	rm -rf dist build work/* megatestresults apsw.egg-info __pycache__ apsw/__pycache__ :memory: .mypy_cache .ropeproject htmlcov "System Volume Information" doc/docdb.json
 	for i in 'vgcore.*' '.coverage*' '*.pyc' '*.pyo' '*~' '*.o' '*.so' '*.dll' '*.pyd' '*.gcov' '*.gcda' '*.gcno' '*.orig' '*.tmp' 'testdb*' 'testextension.sqlext' ; do \
 		find . -type f -name "$$i" -print0 | xargs -0 --no-run-if-empty rm -f ; done
-	rm -f doc/typing.rstgen doc/example.rst doc/example-fts.rst doc/renames.rstgen $(GENDOCS)
+	rm -f doc/typing.rstgen doc/example.rst $(GENEXAMPLES) doc/renames.rstgen $(GENDOCS)
 	rm -f compile_commands.json setup.apsw
 	-rm -rf sqlite3/ work/
 
@@ -48,11 +53,12 @@ doc: docs ## Builds all the doc
 
 docs: build_ext docs-no-fetch
 
-docs-no-fetch: $(GENDOCS) doc/example.rst doc/example-fts.rst doc/.static doc/typing.rstgen doc/renames.rstgen
+docs-no-fetch: $(GENDOCS) doc/example.rst $(GENEXAMPLES) doc/typing.rstgen doc/renames.rstgen tools/docmissing.py tools/docupdate.py
 	rm -f testdb
 	env PYTHONPATH=. $(PYTHON) tools/docmissing.py
 	env PYTHONPATH=. $(PYTHON) tools/docupdate.py $(VERSION) $(RELEASEDATE)
-	$(MAKE) PYTHONPATH="`pwd`" VERSION=$(VERSION) RELEASEDATE=$(RELEASEDATE) -C doc clean html
+	rm apsw/__init__.pyi
+	$(MAKE) PYTHONPATH="`pwd`" VERSION=$(VERSION) RELEASEDATE=$(RELEASEDATE) -C doc clean html ; rc=$$? ; $(MAKE) apsw/__init__.pyi ; exit $$rc
 	tools/spellcheck.sh
 	rst2html5 --strict --verbose --exit-status 1 README.rst >/dev/null
 
@@ -61,11 +67,11 @@ doc/example.rst: examples/main.py tools/example2rst.py src/apswversion.h
 	env PYTHONPATH=. $(PYTHON) -sS tools/example2rst.py examples/main.py doc/example.rst
 	rm -f dbfile
 
-doc/example-fts.rst: examples/fts.py tools/example2rst.py src/apswversion.h
-	-rm -f recipes.db*
+doc/example-%.rst: examples/%.py tools/example2rst.py src/apswversion.h apsw/ext.py
+	-rm -f recipes.db* other.db* diff_demo.db* alice.db* bob.db*
 	cp ../apsw-extended-testing/recipes.db .
-	env PYTHONPATH=. $(PYTHON) -sS tools/example2rst.py examples/fts.py doc/example-fts.rst
-	rm -f recipes.db*
+	env PYTHONPATH=. $(PYTHON) -sS tools/example2rst.py $< $@
+	-rm -f recipes.db* other.db* diff_demo.db* alice.db* bob.db*
 
 doc/typing.rstgen: src/apswtypes.py tools/types2rst.py
 	-rm -f doc/typing.rstgen
@@ -74,9 +80,6 @@ doc/typing.rstgen: src/apswtypes.py tools/types2rst.py
 doc/renames.rstgen: tools/names.py tools/renames.json
 	-rm -f doc/renames.rstgen
 	env PYTHONPATH=. $(PYTHON) tools/names.py rst-gen > doc/renames.rstgen
-
-doc/.static:
-	mkdir -p doc/.static
 
 doc-depends: ## pip installs packages needed to build doc
 	$(PYTHON) -m pip install -U --upgrade-strategy eager sphinx sphinx_rtd_theme
@@ -117,24 +120,17 @@ coverage:  src/faultinject.h ## Coverage of the C code
 	tools/coverage.sh ; rc=$$?; rm -f recipes.db* ; exit $$?
 
 PYCOVERAGEOPTS=--source apsw -p
+PYCOVERAGEPREFIX=env COVERAGE_CORE=sysmon
 
 pycoverage:  ## Coverage of all the Python code
 	-rm -rf .coverage .coverage.* htmlcov dbfile
-	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.tests
-	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw ":memory:" .exit
-	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.speedtest --iterations 2 --scale 2 --unicode 25 --apsw --sqlite3
-	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.trace -o /dev/null --sql --rows --timestamps --thread examples/main.py >/dev/null
+	$(PYCOVERAGEPREFIX) $(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.tests
+	$(PYCOVERAGEPREFIX) $(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw ":memory:" .exit
+	$(PYCOVERAGEPREFIX) $(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.speedtest --iterations 2 --scale 2 --unicode 25 --apsw --sqlite3
+	$(PYCOVERAGEPREFIX) $(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.trace -o /dev/null --sql --rows --timestamps --thread examples/main.py >/dev/null
 	$(PYTHON) -m coverage combine
 	$(PYTHON) -m coverage report -m
 	$(PYTHON) -m coverage html --title "APSW python coverage"
-	$(PYTHON) -m webbrowser -t htmlcov/index.html
-
-ftscoverage: ## Coverage of Python code for FTS support
-	-rm -rf .coverage .coverage.* htmlcov dbfile
-	$(PYTHON) -m coverage run $(PYCOVERAGEOPTS) -m apsw.ftstests
-	$(PYTHON) -m coverage combine
-	$(PYTHON) -m coverage report -m
-	$(PYTHON) -m coverage html --title "APSW FTS python coverage"
 	$(PYTHON) -m webbrowser -t htmlcov/index.html
 
 test: build_ext ## Standard testing
@@ -167,9 +163,10 @@ stubtest: ## Verifies type annotations with mypy
 	-$(PYTHON) -m mypy.stubtest --allowlist tools/stubtest.allowlist apsw
 	-env PYTHONPATH=. $(PYTHON) -m mypy --allow-redefinition examples/main.py
 	-env PYTHONPATH=. $(PYTHON) -m mypy --allow-redefinition examples/fts.py
+	-env PYTHONPATH=. $(PYTHON) -m mypy --allow-redefinition examples/session.py
 
 # set this to a commit id to grab that instead
-FOSSIL_URL="https://www.sqlite.org/src/tarball/sqlite.tar.gz"
+FOSSIL_URL="https://sqlite.org/src/tarball/sqlite.tar.gz"
 fossil: ## Grabs latest trunk from SQLite source control, extracts and builds in sqlite3 directory
 	-rm -rf sqlite3
 	mkdir sqlite3
@@ -197,6 +194,8 @@ compile-win:  ## Builds and tests against all the Python versions on Windows
 	-cmd /c del /s /q build
 	-cmd /c del /s /q .venv
 	-cmd /c md dist
+	$(MAKE) compile-win-one PYTHON=c:/python314/python
+	$(MAKE) compile-win-one PYTHON=c:/python314-32/python
 	$(MAKE) compile-win-one PYTHON=c:/python313/python
 	$(MAKE) compile-win-one PYTHON=c:/python313-32/python
 	$(MAKE) compile-win-one PYTHON=c:/python312/python
@@ -260,7 +259,7 @@ src/_unicodedb.c: tools/ucdprops2code.py ## Update generated Unicode database lo
 	$(PYTHON) tools/ucdprops2code.py $@
 
 # building a python debug interpreter
-PYDEBUG_VER=3.13.2
+PYDEBUG_VER=3.14.0b2
 PYDEBUG_DIR=/space/pydebug
 PYTHREAD_VER=$(PYDEBUG_VER)
 PYTHREAD_DIR=/space/pythread
@@ -271,7 +270,8 @@ pydebug: ## Build a debug python including address sanitizer.  Extensions it bui
 	set -x && cd "$(PYDEBUG_DIR)" && find . -delete && \
 	curl https://www.python.org/ftp/python/`echo $(PYDEBUG_VER) | sed 's/[abr].*//'`/Python-$(PYDEBUG_VER).tar.xz | tar xfJ - && \
 	cd Python-$(PYDEBUG_VER) && \
-	./configure --with-address-sanitizer --with-undefined-behavior-sanitizer --without-pymalloc --with-pydebug --prefix="$(PYDEBUG_DIR)" \
+	./configure --with-address-sanitizer --with-undefined-behavior-sanitizer --with-strict-overflow \
+	--without-pymalloc --with-pydebug --prefix="$(PYDEBUG_DIR)" \
 	--without-freelists --with-assertions && \
 	env ASAN_OPTIONS=detect_leaks=false $(MAKE) -j install
 	$(MAKE) dev-depends PYTHON=$(PYDEBUG_DIR)/bin/python3

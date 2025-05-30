@@ -42,26 +42,14 @@ There are `benchmarks <https://www.sqlite.org/fasterthanfs.html>`__.
 
 /* ZeroBlobBind is defined in apsw.c because of forward references */
 
-static PyObject *
-ZeroBlobBind_new(PyTypeObject *type, PyObject *Py_UNUSED(args), PyObject *Py_UNUSED(kwargs))
-{
-  ZeroBlobBind *self;
-  self = (ZeroBlobBind *)type->tp_alloc(type, 0);
-  if (self)
-  {
-    self->blobsize = 0;
-    self->init_was_called = 0;
-  }
-  return (PyObject *)self;
-}
-
 /** .. method:: __init__(size: int)
 
   :param size: Number of zeroed bytes to create
 */
 static int
-ZeroBlobBind_init(ZeroBlobBind *self, PyObject *args, PyObject *kwargs)
+ZeroBlobBind_init(PyObject *self_, PyObject *args, PyObject *kwargs)
 {
+  ZeroBlobBind *self = (ZeroBlobBind *)self_;
   long long size;
 
   {
@@ -87,14 +75,16 @@ ZeroBlobBind_init(ZeroBlobBind *self, PyObject *args, PyObject *kwargs)
   Size of zero blob in bytes.
 */
 static PyObject *
-ZeroBlobBind_len(ZeroBlobBind *self)
+ZeroBlobBind_len(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
+  ZeroBlobBind *self = (ZeroBlobBind *)self_;
   return PyLong_FromLong(self->blobsize);
 }
 
 static PyObject *
-ZeroBlobBind_tp_str(ZeroBlobBind *self)
+ZeroBlobBind_tp_str(PyObject *self_)
 {
+  ZeroBlobBind *self = (ZeroBlobBind *)self_;
   return PyUnicode_FromFormat("<apsw.zeroblob object size %lld at %p>", self->blobsize, self);
 }
 
@@ -107,9 +97,9 @@ static PyTypeObject ZeroBlobBindType = {
   .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
   .tp_doc = Zeroblob_class_DOC,
   .tp_methods = ZeroBlobBind_methods,
-  .tp_init = (initproc)ZeroBlobBind_init,
-  .tp_new = ZeroBlobBind_new,
-  .tp_str = (reprfunc)ZeroBlobBind_tp_str,
+  .tp_init = ZeroBlobBind_init,
+  .tp_new = PyType_GenericNew,
+  .tp_str = ZeroBlobBind_tp_str,
 };
 
 /* BLOB TYPE */
@@ -205,15 +195,16 @@ APSWBlob_close_internal(APSWBlob *self, int force)
 }
 
 static void
-APSWBlob_dealloc(APSWBlob *self)
+APSWBlob_dealloc(PyObject *self_)
 {
+  APSWBlob *self = (APSWBlob *)self_;
   APSW_CLEAR_WEAKREFS;
 
   if (self->connection)
     DBMUTEX_FORCE(self->connection->dbmutex);
   APSWBlob_close_internal(self, 2);
 
-  Py_TpFree((PyObject *)self);
+  Py_TpFree(self_);
 }
 
 /* If the blob is closed, we return the same error as normal python files */
@@ -232,9 +223,9 @@ APSWBlob_dealloc(APSWBlob *self)
 */
 
 static PyObject *
-APSWBlob_length(APSWBlob *self)
+APSWBlob_length(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
-
+  APSWBlob *self = (APSWBlob *)self_;
   CHECK_BLOB_CLOSED;
   return PyLong_FromLong(sqlite3_blob_bytes(self->pBlob));
 }
@@ -250,8 +241,9 @@ APSWBlob_length(APSWBlob *self)
 */
 
 static PyObject *
-APSWBlob_read(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBlob_read(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBlob *self = (APSWBlob *)self_;
   int length = -1;
   int res;
   PyObject *buffy = 0;
@@ -329,8 +321,9 @@ APSWBlob_read(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs,
 */
 
 static PyObject *
-APSWBlob_read_into(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBlob_read_into(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBlob *self = (APSWBlob *)self_;
   int res = SQLITE_OK;
   long long offset = 0, length = -1;
   PyObject *buffer = NULL;
@@ -412,8 +405,9 @@ errorexit:
 */
 
 static PyObject *
-APSWBlob_seek(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBlob_seek(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBlob *self = (APSWBlob *)self_;
   int offset, whence = 0;
 
   CHECK_BLOB_CLOSED;
@@ -457,18 +451,18 @@ out_of_range:
 */
 
 static PyObject *
-APSWBlob_tell(APSWBlob *self)
+APSWBlob_tell(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
-
+  APSWBlob *self = (APSWBlob *)self_;
   CHECK_BLOB_CLOSED;
   return PyLong_FromLong(self->curoffset);
 }
 
-/** .. method:: write(data: bytes) -> None
+/** .. method:: write(data: Buffer) -> None
 
   Writes the data to the blob.
 
-  :param data: bytes to write
+  :param data: Buffer to write
 
   :raises TypeError: Wrong data type
 
@@ -480,8 +474,9 @@ APSWBlob_tell(APSWBlob *self)
   -* sqlite3_blob_write
 */
 static PyObject *
-APSWBlob_write(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBlob_write(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBlob *self = (APSWBlob *)self_;
   int ok = 0, res = SQLITE_OK;
   Py_buffer data_buffer;
   PyObject *data;
@@ -491,7 +486,7 @@ APSWBlob_write(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs
   {
     Blob_write_CHECK;
     ARG_PROLOG(1, Blob_write_KWNAMES);
-    ARG_MANDATORY ARG_py_buffer(data);
+    ARG_MANDATORY ARG_Buffer(data);
     ARG_EPILOG(NULL, Blob_write_USAGE, );
   }
 
@@ -505,15 +500,10 @@ APSWBlob_write(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs
 
   APSW_FAULT(BlobWriteTooBig, , calc_end = (Py_ssize_t)0x7FFFFFFF * (Py_ssize_t)0x1000);
 
-  if ((int)calc_end < 0)
-  {
-    PyErr_Format(PyExc_ValueError, "Data is too large (integer overflow)");
-    goto finally;
-  }
-
   if (calc_end > sqlite3_blob_bytes(self->pBlob))
   {
-    PyErr_Format(PyExc_ValueError, "Data would go beyond end of blob");
+    PyErr_Format(PyExc_ValueError, "Data length %zd would go beyond end of blob %d", calc_end,
+                 sqlite3_blob_bytes(self->pBlob));
     goto finally;
   }
 
@@ -560,8 +550,9 @@ finally:
 */
 
 static PyObject *
-APSWBlob_close(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBlob_close(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBlob *self = (APSWBlob *)self_;
   int setexc;
   int force = 0;
 
@@ -598,9 +589,9 @@ APSWBlob_close(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs
 */
 
 static PyObject *
-APSWBlob_enter(APSWBlob *self)
+APSWBlob_enter(PyObject *self_, PyObject *Py_UNUSED(args))
 {
-
+  APSWBlob *self = (APSWBlob *)self_;
   CHECK_BLOB_CLOSED;
 
   return Py_NewRef((PyObject *)self);
@@ -614,8 +605,9 @@ APSWBlob_enter(APSWBlob *self)
 */
 
 static PyObject *
-APSWBlob_exit(APSWBlob *self, PyObject *Py_UNUSED(args))
+APSWBlob_exit(PyObject *self_, PyObject *Py_UNUSED(args))
 {
+  APSWBlob *self = (APSWBlob *)self_;
   int setexc;
 
   CHECK_BLOB_CLOSED;
@@ -638,8 +630,9 @@ APSWBlob_exit(APSWBlob *self, PyObject *Py_UNUSED(args))
 */
 
 static PyObject *
-APSWBlob_reopen(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWBlob_reopen(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
+  APSWBlob *self = (APSWBlob *)self_;
   int res;
   long long rowid;
 
@@ -669,8 +662,9 @@ APSWBlob_reopen(APSWBlob *self, PyObject *const *fast_args, Py_ssize_t fast_narg
 }
 
 static PyObject *
-APSWBlob_tp_str(APSWBlob *self)
+APSWBlob_tp_str(PyObject *self_)
 {
+  APSWBlob *self = (APSWBlob *)self_;
   return PyUnicode_FromFormat("<apsw.Blob object from %S at %p>",
                               self->connection ? (PyObject *)self->connection : apst.closed, self);
 }
@@ -695,10 +689,10 @@ static PyMethodDef APSWBlob_methods[] = {
 static PyTypeObject APSWBlobType = {
   PyVarObject_HEAD_INIT(NULL, 0).tp_name = "apsw.Blob",
   .tp_basicsize = sizeof(APSWBlob),
-  .tp_dealloc = (destructor)APSWBlob_dealloc,
+  .tp_dealloc = APSWBlob_dealloc,
   .tp_flags = Py_TPFLAGS_DEFAULT,
   .tp_doc = Blob_class_DOC,
   .tp_weaklistoffset = offsetof(APSWBlob, weakreflist),
   .tp_methods = APSWBlob_methods,
-  .tp_str = (reprfunc)APSWBlob_tp_str,
+  .tp_str = APSWBlob_tp_str,
 };

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import sys
 import gc
 import math
@@ -25,18 +26,27 @@ print("tmpdir", tmpdir.name)
 testing_recursion = False
 
 
+def file_cleanup():
+    if "apsw" in sys.modules:
+        for c in sys.modules["apsw"].connections():
+            c.close(True)
+    for f in glob.glob(f"{tmpdir.name}/*"):
+        os.remove(f)
+
+
+def exercise_examples(example_code, expect_exception):
+    file_cleanup()
+    for code, __ in example_code:
+        exec(code, {"print": lambda *args: None}, None)
+        if expect_exception:
+            return
+
+
 def exercise(example_code, expect_exception):
     "This function exercises the code paths where we have fault injection"
 
     global testing_recursion
     testing_recursion = False
-
-    def file_cleanup():
-        if "apsw" in sys.modules:
-            for c in sys.modules["apsw"].connections():
-                c.close(True)
-        for f in glob.glob(f"{ tmpdir.name }/dbfile*") + glob.glob(f"{ tmpdir.name }/myobfudb*"):
-            os.remove(f)
 
     file_cleanup()
 
@@ -108,6 +118,33 @@ def exercise(example_code, expect_exception):
     con = apsw.Connection("")
     apsw.connections()
     con.wal_autocheckpoint(1)
+
+    # this needs to be early to exercise the chain of faults in TableChange.tp_str
+    con.execute("create table one(two, three, four, PRIMARY KEY(two, three, four)); insert into one values(2,3,4)")
+    session = apsw.Session(con, "main")
+    session.attach()
+    con.execute("update one set two=7, four=77")
+
+    for table_change in apsw.Changeset.iter(session.changeset()):
+        str(table_change)
+
+    cb = apsw.ChangesetBuilder()
+    cb.add(session.changeset())
+
+    class StreamInput:
+        def __init__(self, source):
+            self.source = source
+            self.offset = 0
+            self.sizes = []
+
+        def __call__(self, amount: int):
+            self.sizes.append(amount)
+            amount = min(len(self.sizes), amount)
+            res = self.source[self.offset : self.offset + amount]
+            self.offset += len(res)
+            return res
+
+    cb.add(StreamInput(session.changeset()))
 
     extfname = "./testextension.sqlext"
     if os.path.exists(extfname):
@@ -258,6 +295,36 @@ def exercise(example_code, expect_exception):
     con.register_fts5_function("identity", identity)
 
     con.execute("select identity(testfts,a) from testfts('e OR 5')").get
+
+    session = apsw.Session(con, "main")
+    session.attach()
+    con.execute("""create table s1(one PRIMARY KEY, two); insert into s1 values(3, 4);""")
+    changeset = session.changeset()
+    session2 = apsw.Session(con, "main")
+    session2.attach()
+    con.execute("update s1 set one = 77")
+    changeset2 = session2.changeset()
+
+    apsw.Changeset.concat(changeset, changeset2)
+
+    class StreamInput:
+        def __init__(self, source):
+            self.source = source
+            self.offset = 0
+            self.sizes = []
+
+        def __call__(self, amount: int):
+            self.sizes.append(amount)
+            amount = min(len(self.sizes), amount)
+            res = self.source[self.offset : self.offset + amount]
+            self.offset += len(res)
+            return res
+
+    class StreamOutput:
+        def __call__(self, data):
+            pass
+
+    apsw.Changeset.concat_stream(StreamInput(changeset), StreamInput(changeset2), StreamOutput())
 
     class Source:
         def Connect(self, *args):
@@ -512,7 +579,7 @@ def exercise(example_code, expect_exception):
     if expect_exception:
         return
 
-    testdbname = f"{ tmpdir.name }/dbfile-testdb"
+    testdbname = f"{tmpdir.name}/dbfile-testdb"
     flags = [apsw.SQLITE_OPEN_MAIN_DB | apsw.SQLITE_OPEN_CREATE | apsw.SQLITE_OPEN_READWRITE, 0]
     apsw.VFSFile("testvfs", testdbname, flags)
 
@@ -560,23 +627,19 @@ def exercise(example_code, expect_exception):
 
     file_cleanup()
 
-    import apsw.tests
+    import apsw.tests.__main__
 
-    apsw.tests.testtimeout = False
-    apsw.tests.vfstestdb(f"{ tmpdir.name }/dbfile-delme-vfswal", "apswfivfs2", mode="wal")
+    apsw.tests.__main__.testtimeout = False
+    apsw.tests.__main__.vfstestdb(f"{tmpdir.name}/dbfile-delme-vfswal", "apswfivfs2", mode="wal")
 
     file_cleanup()
-    apsw.tests.testtimeout = True
-    apsw.tests.vfstestdb(f"{ tmpdir.name }/dbfile-delme-vfsstd", "apswfivfs")
+    apsw.tests.__main__.testtimeout = True
+    apsw.tests.__main__.vfstestdb(f"{tmpdir.name}/dbfile-delme-vfsstd", "apswfivfs")
 
     if expect_exception:
         return
 
-    file_cleanup()
-    for code, __ in example_code:
-        exec(code, {"print": lambda *args: None}, None)
-        if expect_exception:
-            return
+    exercise_examples(example_code, expect_exception)
 
     if False:
         # This does recursion error, which also causes lots of last chance
@@ -585,7 +648,7 @@ def exercise(example_code, expect_exception):
         testing_recursion = True
         vfsinstance.parent = "apswfivfs2"
         apsw.tests.testtimeout = False
-        apsw.tests.vfstestdb(f"{ tmpdir.name }/dbfile-delme-vfswal", "apswfivfs2", mode="wal")
+        apsw.tests.vfstestdb(f"{tmpdir.name}/dbfile-delme-vfswal", "apswfivfs2", mode="wal")
         testing_recursion = False
 
     apsw.set_default_vfs(apsw.vfs_names()[0])
@@ -614,7 +677,7 @@ class Tester:
 
     FAULT = FAULTT, FAULTS
 
-    def __init__(self):
+    def __init__(self, example_arg=[]):
         self.returns = genfaultinject.returns
         self.call_remap = {v: k for k, v in genfaultinject.call_map.items()}
 
@@ -626,24 +689,45 @@ class Tester:
         self.start_line = start
         self.end_line = end
 
-        self.example_code = []
-        for example in pathlib.Path().glob("examples/*.py"):
-            code = example.read_text()
-            # we do various transformations but must keep the line numbers the same
-            code = code.replace("import os", "import os,contextlib")
-            # make it use tmpfs
-            code = code.replace('"dbfile"', f'"{ tmpdir.name }/dbfile-delme-example"')
-            code = code.replace("myobfudb", f"{ tmpdir.name }/myobfudb-example")
-            # silence logging
-            code = code.replace("apsw.ext.log_sqlite()", "apsw.ext.log_sqlite(level=0)")
-            # resource usage is deliberately slow
-            code = code.replace("time.sleep(1.3)", "time.sleep(0)")
-            # and it and Trace make output
-            code = code.replace("import random", "import random,io; string_sink=io.StringIO()")
-            code = code.replace("sys.stdout,", "string_sink,")
-            # fix pprint
-            code = code.replace("from pprint import pprint", "pprint = print")
+        self.example_arg = example_arg
 
+        self.example_code = []
+        # various transformations with the intention to keep the line numbers the same
+        replacements = {
+            # fix path to setup sql
+            'pathlib.Path("session.sql")': 'pathlib.Path("doc/_static/samples/session.sql")',
+            # we need contextlib
+            "import os": "import os,contextlib",
+            # make it use tmpfs
+            '"dbfile"': f'"{tmpdir.name}/dbfile-delme-example"',
+            "myobfudb": f"{tmpdir.name}/myobfudb-example",
+            '"alice.db"': f'"{tmpdir.name}/alice.db"',
+            '"bob.db"': f'"{tmpdir.name}/bob.db"',
+            '"diff_demo.db"': f'"{tmpdir.name}/diff_demo.db"',
+            "'other.db'": f"'{tmpdir.name}/other.db'",
+            # silence logging
+            "apsw.ext.log_sqlite()": "apsw.ext.log_sqlite(level=0)",
+            # resource usage is deliberately slow
+            "time.sleep(1.3)": "time.sleep(0)",
+            # and it and Trace make output
+            "import random": "import random,io; string_sink=io.StringIO()",
+            "sys.stdout,": "string_sink,",
+            # fix pprint
+            "from pprint import pprint": "pprint = print",
+        }
+
+        example_files = []
+        if not self.example_arg:
+            example_files.extend(list(pathlib.Path().glob("examples/*.py")))
+        else:
+            names = list(pathlib.Path().glob(f"examples/{self.example_arg}.py"))
+            if not names:
+                sys.exit(f"f{pattern=} matched no examples files")
+            example_files.extend(names)
+        for example in example_files:
+            code = example.read_text()
+            for k, v in replacements.items():
+                code = code.replace(k, v)
             self.example_code.append((compile(code, example.with_suffix(""), "exec"), len(code.split("\n"))))
 
     @staticmethod
@@ -723,19 +807,13 @@ class Tester:
                 self.expect_exception.append(apsw_attr("NoFTS5Error"))
                 return self.apsw_attr("SQLITE_ERROR")
 
-            if fname.startswith("sqlite3_"):
+            if fname.startswith("sqlite3"):  # sqlite api as well as session stuff
                 self.expect_exception.append(apsw_attr("TooBigError"))
                 return self.apsw_attr("SQLITE_TOOBIG")
 
             if fname.startswith("PyLong_As"):
                 self.expect_exception.append(OverflowError)
                 return (-1, OverflowError, self.FAULTS)
-
-            if fname == "PyBuffer_IsContiguous":
-                # the PyObject_GetBuffer call fails non-contiguous
-                # anyway, but this is being doubly sure
-                self.expect_exception.append(TypeError)
-                return 0
 
             if fname.startswith("Py") or fname in {"_PyBytes_Resize", "_PyTuple_Resize", "getfunctionargs"}:
                 # for ones returning -1 on error
@@ -766,6 +844,9 @@ class Tester:
             return self.Proceed
         if key[2] == "apsw_leak_check":
             return self.Proceed
+        if "misuse_check" in key[4]:
+            # sqlite session stuff where we only care about misuse being returned
+            return self.Proceed
         if self.runplan is not None:
             if not self.runplan:
                 return self.Proceed
@@ -788,7 +869,7 @@ class Tester:
         line = self.get_progress()
         if self.runplan is not None:
             print("  Pre" if self.runplan else "Fault", end=" ")
-        print(f"faulted: { len(self.has_faulted_ever): 4} / new: { len(self.to_fault): 3}" f" { line } { key }")
+        print(f"faulted: {len(self.has_faulted_ever): 4} / new: {len(self.to_fault): 3} {line} {key}")
         try:
             return self.FaultCall(key)
         finally:
@@ -865,9 +946,9 @@ class Tester:
                 ok = False
         if not ok:
             print("\nExceptions failed to verify")
-            print(f"Got { self.exc_happened }")
-            print(f"Expected { self.expect_exception }")
-            print(f"Testing { tested }")
+            print(f"Got {self.exc_happened}")
+            print(f"Expected {self.expect_exception}")
+            print(f"Testing {tested}")
             if len(self.exc_happened) < len(tested):
                 print("Fewer exceptions observed than faults generated")
             if self.last_exc:
@@ -921,7 +1002,7 @@ class Tester:
                         # we do this at the very end with shutdown being terminal
                         sys.modules["apsw"].shutdown()
                     else:
-                        exercise(self.example_code, self.expect_exception)
+                        (exercise_examples if self.example_arg else exercise)(self.example_code, self.expect_exception)
                         self.abort = 0
                         if not use_runplan and not self.faulted_this_round:
                             use_runplan = True
@@ -943,7 +1024,6 @@ class Tester:
                         if res:
                             input("Leaks found, return to continue> ")
 
-
             self.verify_exception(self.faulted_this_round)
 
         if complete:
@@ -953,14 +1033,14 @@ class Tester:
                 sys.modules["apsw"]._fini()
             del sys.modules["apsw"]
 
-        print(f"Total faults: { len(self.has_faulted_ever) }")
+        print(f"Total faults: {len(self.has_faulted_ever)}")
 
         if self.to_fault:
             if use_runplan:
                 print("Runplan\n")
                 print(self.runplan)
                 print()
-            t = f"Failed to fault { len(self.to_fault) }"
+            t = f"Failed to fault {len(self.to_fault)}"
             print("=" * len(t))
             print(t)
             print("=" * len(t))
@@ -972,5 +1052,11 @@ class Tester:
         sys.unraisablehook = sys.__unraisablehook__
 
 
-t = Tester()
+import argparse
+
+p = argparse.ArgumentParser()
+p.add_argument("example", nargs="?", help="If specificed then only run this example")
+args = p.parse_args()
+
+t = Tester(args.example)
 t.run()

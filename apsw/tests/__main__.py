@@ -338,7 +338,13 @@ class APSW(unittest.TestCase):
         "set_row_trace": 1,
     }
 
-    blob_nargs = {"write": 1, "read": 1, "read_into": 1, "reopen": 1, "seek": 2}
+    blob_nargs = {
+        "write": 1,
+        "read": 1,
+        "read_into": 1,
+        "reopen": 1,
+        "seek": 2,
+    }
 
     def setUp(self):
         apsw.config(apsw.SQLITE_CONFIG_LOG, None)
@@ -1299,11 +1305,11 @@ class APSW(unittest.TestCase):
         self.assertRaises(RecursionError, apsw.Connection, "testdb", vfs="vfsa")
         sys.setrecursionlimit(1000)
 
-        def handler():  # incorrect number of arguments on purpose
+        def handler_with_deliberate_wrong_args():  # incorrect number of arguments on purpose
             pass
 
         try:
-            apsw.config(apsw.SQLITE_CONFIG_LOG, handler)
+            apsw.config(apsw.SQLITE_CONFIG_LOG, handler_with_deliberate_wrong_args)
             self.assertRaisesUnraisable(TypeError, apsw.log, 11, "recursion error forced")
         finally:
             apsw.config(apsw.SQLITE_CONFIG_LOG, None)
@@ -1419,6 +1425,16 @@ class APSW(unittest.TestCase):
         # Errors
         self.assertRaises(TypeError, apsw.format_sql_value, apsw)
         self.assertRaises(TypeError, apsw.format_sql_value)
+
+    def testSetlkTimeout(self):
+        "sqlite3_setlk_timeout"
+        self.assertRaises(OverflowError, self.db.setlk_timeout, sys.maxsize * 64, apsw.SQLITE_SETLK_BLOCK_ON_CONNECT)
+        # it current gives range for values less than -1
+        self.assertRaises(apsw.RangeError, self.db.setlk_timeout, -2, apsw.SQLITE_SETLK_BLOCK_ON_CONNECT)
+
+        # no error is given for unknown flags so we don't test them
+        self.db.setlk_timeout(1000, apsw.SQLITE_SETLK_BLOCK_ON_CONNECT)
+
 
     def testVTableStuff(self):
         "Test new stuff added for Virtual tables"
@@ -5055,13 +5071,12 @@ class APSW(unittest.TestCase):
         self.assertTrue("rollback" in traces)
 
     def testIssue142(self):
-        "Issue 142: bytes from system during dump"
-        orig_strftime = time.strftime
-        orig_getuser = getpass.getuser
+        # not really relevant any more.  python 2 getpass and strftime could
+        # return bytes not str.  they are used in a fstring now so it doesn't
+        # matter, and python 3 only does str.  in strict checking mode there
+        # would be a warning about str of bytes.
         fh = []
         try:
-            time.strftime = lambda arg: b"gjkTIMEJUNKhgjhg\xfe\xdf"
-            getpass.getuser = lambda: b"\x81\x82\x83gjkhgUSERJUNKjhg\xfe\xdf"
             fh = [open(TESTFILEPREFIX + "test-shell-" + t, "w+", encoding="utf8") for t in ("in", "out", "err")]
             kwargs = {"stdin": fh[0], "stdout": fh[1], "stderr": fh[2]}
 
@@ -5077,14 +5092,9 @@ class APSW(unittest.TestCase):
             for row in rows:
                 self.assertTrue(row[0] in out)
 
-            self.assertTrue("TIMEJUNK" in out)
-            self.assertTrue("USERJUNK" in out)
-
         finally:
             for f in fh:
                 f.close()
-            time.strftime = orig_strftime
-            getpass.getuser = orig_getuser
 
     def testIssue186(self):
         "Issue 186: desription cache between statements"
@@ -5787,28 +5797,6 @@ class APSW(unittest.TestCase):
                 self.assertEqual(row[0], text)
             db.close()
 
-    # calls that need protection
-    calls = {}
-
-    def sourceCheckMutexCall(self, filename, name, lines):
-        # we check that various calls are wrapped with various macros
-        for i, line in enumerate(lines):
-            if "PYSQLITE_CALL" in line and "Py" in line:
-                self.fail("%s: %s() line %d - Py call while GIL released - %s" % (filename, name, i, line.strip()))
-            for k, v in self.calls.items():
-                if v.get("skipfiles", None) and v["skipfiles"].match(filename):
-                    continue
-                mo = v["match"].search(line)
-                if mo:
-                    func = mo.group(1)
-                    if v.get("skipcalls", None) and v["skipcalls"].match(func):
-                        continue
-                    if not v["needs"].search(line) and not v["needs"].search(lines[i - 1]):
-                        self.fail(
-                            "%s: %s() line %d call to %s(): %s - %s\n"
-                            % (filename, name, i, func, v["desc"], line.strip())
-                        )
-
     def sourceCheckFunction(self, filename, name, lines):
         # existing exception in callbacks
         if any("PyGILState_Ensure" in line for line in lines):
@@ -5825,6 +5813,7 @@ class APSW(unittest.TestCase):
             "FunctionCBInfo",
             "APSWFTS5Tokenizer",
             "cursor",
+            "APSWChangesetIterator",
         ):
             return
 
@@ -5874,6 +5863,37 @@ class APSW(unittest.TestCase):
                     "closed": "CHECK_CLOSED",
                 },
                 "order": ("use", "closed"),
+            },
+            "APSWSession": {
+                "skip": {
+                    "init",
+                    "close_internal",
+                    "close",
+                    "get_change_patch_set",
+                    "get_change_patch_set_stream",
+                    "dealloc",
+                    "tp_traverse",
+                },
+                "req": {"closed": "CHECK_SESSION_CLOSED"},
+                "order": ("closed",),
+            },
+            "APSWTableChange": {
+                "skip": {
+                    "tp_str",
+                    "dealloc",
+                },
+                "req": {"scope": "CHECK_TABLE_SCOPE"},
+                "order": ("scope",),
+            },
+            "APSWChangesetBuilder": {
+                "skip": {"dealloc", "close_internal", "close", "init", "tp_traverse"},
+                "req": {"closed": "CHECK_BUILDER_CLOSED"},
+                "order": ("closed",),
+            },
+            "APSWRebaser": {
+                "skip": {"dealloc", "init"},
+                "req": {"closed": "CHECK_REBASER_CLOSED"},
+                "order": ("closed",),
             },
             "APSWBlob": {
                 "skip": ("dealloc", "init", "close", "close_internal", "tp_str"),
@@ -5995,7 +6015,8 @@ class APSW(unittest.TestCase):
             # check not using C++ style comments
             code = read_whole_file(filename, "rt").replace("http://", "http:__").replace("https://", "https:__")
             if "//" in code:
-                self.fail("// style comment in " + filename)
+                lines = [linenum for linenum, line in enumerate(code.splitlines(), 1) if "//" in line]
+                self.fail(f"// style comment in {filename} lines {lines}")
 
             if filename.replace("\\", "/") != "src/pyutil.c":
                 for n in self.should_use_compat:
@@ -6016,10 +6037,9 @@ class APSW(unittest.TestCase):
             for line in read_whole_file(filename, "rt").split("\n"):
                 if line.startswith("}") and infunc:
                     if infunc == 1:
-                        self.sourceCheckMutexCall(filename, name1, lines)
                         self.sourceCheckFunction(filename, name1, lines)
                     elif infunc == 2:
-                        self.sourceCheckMutexCall(filename, name2, lines)
+                        pass
                     else:
                         assert False
                     infunc = 0
@@ -8719,6 +8739,21 @@ class APSW(unittest.TestCase):
         self.assertIn(f"({N})", get(fh[1]))
         del ref
 
+        reset()
+        cmd(f".open {fn}\n.connection")
+        s.cmdloop()
+        # uri should be on by default
+        self.assertIn("URI", get(fh[1]).splitlines()[-1])
+        reset()
+        cmd(f".open --flags READWRITE|CREATE {fn}\n.connection")
+        s.cmdloop()
+        self.assertNotIn("URI", get(fh[1]).splitlines()[-1])
+        reset()
+        cmd(f".open --flags readwrite|orange {fn}")
+        s.cmdloop()
+        isnotempty(fh[2])
+        self.assertIn("'SQLITE_OPEN_ORANGE' is not a known open flag", get(fh[2]))
+
         ###
         ### Some test data
         ###
@@ -10623,7 +10658,11 @@ shell.write(shell.stdout, "hello world\\n")
         )
         self.assertEqual(dcrf.get_type("an integer"), int)
         for row in self.db.execute("select * from foo"):
-            a = row.__annotations__
+            self.assertTrue(dataclasses.is_dataclass(row))
+            if hasattr(inspect, "get_annotations"):
+                a= inspect.get_annotations(row.__class__)
+            else:
+                a = row.__class__.__annotations__
             self.assertEqual(a["one"], typing.Any)
             self.assertEqual(a["two"], int)
             self.assertEqual(a["three"], str)
@@ -11726,7 +11765,8 @@ test_types_vals = (
     False,
 )
 
-from apsw.ftstests import *
+from .ftstests import *
+from .sessiontests import *
 from .mctests import *
 
 if __name__ == "__main__":

@@ -35,26 +35,30 @@ then
   PROFILE="-O2 --coverage"
 fi
 
-if [ -f sqlite3/sqlite3config.h ]
+if [ -f sqlite3/sqlite_cfg.h ]
 then
     CFLAGS="$CFLAGS -DAPSW_USE_SQLITE_CFG_H"
 fi
 
 export APSW_TEST_LARGE=t COVERAGE_RUN=true
 
+OUR_CFLAGS=" -UNDEBUG  -DAPSW_FAULT_INJECT -DAPSW_DEBUG -DSQLITE_DEBUG"
+
 set -ex
-$CC $CFLAGS $MOREFLAGS $PROFILE -UNDEBUG -DSQLITE_ENABLE_API_ARMOR -DAPSW_USE_SQLITE_AMALGAMATION  -DAPSW_FAULT_INJECT -DSQLITE_ENABLE_FTS5 -I$INCLUDEDIR -Isrc -Isqlite3 -I. -c src/apsw.c
+$CC $CFLAGS $MOREFLAGS $PROFILE $OUR_CFLAGS -DSQLITE_ENABLE_API_ARMOR -DAPSW_USE_SQLITE_AMALGAMATION -DSQLITE_ENABLE_FTS5  -DSQLITE_ENABLE_SESSION -I$INCLUDEDIR -Isrc -Isqlite3 -I. -c src/apsw.c
 $LINKER $PROFILE apsw.o -o apsw/__init__$SOSUFFIX
-$CC $CFLAGS $MOREFLAGS $PROFILE -DAPSW_FAULT_INJECT -I$INCLUDEDIR -Isrc -UNDEBUG -c src/unicode.c
+$CC $CFLAGS $MOREFLAGS $PROFILE $OUR_CFLAGS -I$INCLUDEDIR -Isrc -c src/unicode.c
 $LINKER $PROFILE unicode.o -o apsw/_unicode$SOSUFFIX
 set +ex
 echo "Running $PYTHON $args"
 env PYTHONPATH=. $PYTHON $args
 res=$?
-[ $res -eq 0 -a -z "$NO_FI" ] && echo "Running $PYTHON tools/fi.py" && env PYTHONPATH=. $PYTHON tools/fi.py
-$GCOVWRAPPER gcov $GCOVOPTS apsw.gcno unicode.gcno > /dev/null
+[ $res -eq 0 -a -z "$NO_FI" ] && echo "Running $PYTHON tools/fi.py $FI_ARGS" && env PYTHONPATH=. $PYTHON tools/fi.py $FI_ARGS
+$GCOVWRAPPER gcov $GCOVOPTS *.gcno > /dev/null
+
+echo ; echo
 mv sqlite3.c.gcov sqlite3/
-rm -f src/*.gcov
+rm -f src/*.gcov .coverage*
 mv *.gcov src/
 $PYTHON tools/coverageanalyser.py
 exit $res

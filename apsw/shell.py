@@ -40,8 +40,7 @@ class Shell:
     :param stderr: Where to send errors (default sys.stderr)
     :param encoding: Default encoding for files opened/created by the
       Shell.  If you want stdin/out/err to use a particular encoding
-      then you need to provide them :func:`already configured
-      <codecs.open>` that way.
+      then you need to provide them already configured that way.
     :param args: This should be program arguments only (ie if
       passing in sys.argv do not include sys.argv[0] which is the
       program name.  You can also pass in None and then call
@@ -1145,6 +1144,9 @@ Enter ".help" for instructions
 
         This covers all connections, not just those started in this
         shell.  Closed connections are not shown.
+
+        For each connection, its index for switching active connection,
+        (VFS used), "filename", and open flags are shown.
         """
         self.db_references.add(self.db)
         dbs = []
@@ -1161,9 +1163,14 @@ Enter ".help" for instructions
                 self.write(self.stdout, co.bold + "(Current connection is closed)" + co.bold_ + "\n")
             for i, c in enumerate(dbs):
                 sel = "*" if self.db is c else " "
+                flags = []
+                # lower values are more meaningful
+                for value, name in sorted((k, v) for k,v in apsw.mapping_open_flags.items() if isinstance(k, int)):
+                    if c.open_flags & value:
+                        flags.append(name[len("SQLITE_OPEN_"):])
                 self.write(
                     self.stdout,
-                    f'{co.bold}{sel}{co.bold_} {co.vnumber}{i: 2}{co.vnumber_} - ({c.open_vfs}) "{co.vstring}{c.filename}{co.vstring_}"\n',
+                    f'{co.bold}{sel}{co.bold_} {co.vnumber}{i: 2}{co.vnumber_} - ({c.open_vfs}) "{co.vstring}{c.filename}{co.vstring_}"    ({"|".join(flags)})\n',
                 )
         elif len(cmd) == 1:
             c = dbs[int(cmd[0])]
@@ -1320,23 +1327,6 @@ Enter ".help" for instructions
         # under our feet
         self.process_sql("BEGIN IMMEDIATE", internal=True)
 
-        # Used in comment() - see issue 142
-        outputstrtype = str
-
-        # Python 2.3 can end up with nonsense like "en_us" so we fall
-        # back to ascii in that case
-        outputstrencoding = getattr(self.stdout, "encoding", "ascii")
-        try:
-            codecs.lookup(outputstrencoding)
-        except Exception:
-            outputstrencoding = "ascii"
-
-        def unicodify(s):
-            if not isinstance(s, outputstrtype):
-                # See issue 142 - it may not be in an expected encoding
-                return s.decode(outputstrencoding, "replace")
-            return s
-
         try:
             # first pass -see if virtual tables or foreign keys are in
             # use.  If they are we emit pragmas to deal with them, but
@@ -1392,20 +1382,19 @@ Enter ".help" for instructions
                 self.write(self.stdout, "\n")
 
             def comment(s):
-                s = unicodify(s)
                 self.write(self.stdout, textwrap.fill(s, 78, initial_indent="-- ", subsequent_indent="-- ") + "\n")
 
             pats = ", ".join([(x, "(All)")[x == "%"] for x in cmd])
-            comment("SQLite dump (by APSW %s)" % (apsw.apsw_version(),))
-            comment("SQLite version " + apsw.sqlite_lib_version())
-            comment("Date: " + unicodify(time.strftime("%c")))
-            comment("Tables like: " + pats)
-            comment("Database: " + self.db.filename)
+            comment(f"SQLite dump (by APSW {apsw.apsw_version()})")
+            comment(f"SQLite version {apsw.sqlite_lib_version()}")
+            comment(f"Date: {time.strftime('%c')}")
+            comment(f"Tables like: {pats}")
+            comment(f"Database: {self.db.filename}")
             try:
                 import getpass
                 import socket
 
-                comment("User: %s @ %s" % (unicodify(getpass.getuser()), unicodify(socket.gethostname())))
+                comment("User: %s @ %s" % (getpass.getuser(), socket.gethostname()))
             except ImportError:
                 pass
             blank()
@@ -1934,7 +1923,7 @@ Enter ".help" for instructions
     def _csvin_wrapper(self, filename, dialect):
         # Returns a csv reader that works around python bugs and uses
         # dialect dict to configure reader
-        thefile = codecs.open(filename, "r", self.encoding[0])
+        thefile = open(filename, "r", encoding=self.encoding[0])
         for line in csv.reader(thefile, **dialect.copy()):
             yield line
         thefile.close()
@@ -2354,17 +2343,21 @@ Enter ".help" for instructions
 
         Options are:
 
-        --wipe     Closes any existing connections in this process referring to
-                   the same file  and deletes the database file, journals etc
-                   before opening
+        --wipe         Closes any existing connections in this process referring to
+                       the same file and deletes the database file, journals etc
+                       before opening
 
-        --vfs VFS  Which vfs to use when opening
+        --vfs VFS      Which vfs to use when opening
+
+        --flags FLAGS  Open flags to use, in lower or upper case.  Use | to
+                       combine. Default is  READWRITE|CREATE|URI
 
         If FILE is omitted then a memory database is opened
         """
         wipe = False
         vfs = None
         dbname = None
+        flags = apsw.SQLITE_OPEN_READWRITE | apsw.SQLITE_OPEN_CREATE | apsw.SQLITE_OPEN_URI
         c = cmd
         while c:
             p = c.pop(0)
@@ -2374,6 +2367,16 @@ Enter ".help" for instructions
                     continue
                 if p == "--vfs":
                     vfs = c.pop(0)
+                    continue
+                if p == "--flags":
+                    flag_names = c.pop(0)
+                    flags = 0
+                    for flag in flag_names.split("|"):
+                        flag = flag.strip().upper()
+                        name = f"SQLITE_OPEN_{ flag }" if not flag.startswith("SQLITE_OPEN") else flag
+                        if name not in apsw.mapping_open_flags:
+                            raise self.Error(f"'{name}' is not a known open flag")
+                        flags |= apsw.mapping_open_flags[name]
                     continue
                 raise self.Error("Unknown open param: " + p)
             if dbname is not None:
@@ -2397,7 +2400,7 @@ Enter ".help" for instructions
         self.db_references.add(self.db)
         self.dbfilename = dbname if dbname is not None else ""
         self._db = apsw.Connection(
-            self.dbfilename, vfs=vfs, flags=apsw.SQLITE_OPEN_URI | apsw.SQLITE_OPEN_READWRITE | apsw.SQLITE_OPEN_CREATE
+            self.dbfilename, vfs=vfs, flags=flags
         )
         self._apply_fts()
 
@@ -2434,7 +2437,7 @@ Enter ".help" for instructions
                     old.close()
                 return
 
-            newf = codecs.open(fname, "w", self.encoding[0], self.encoding[1])
+            newf = open(fname, "w", encoding=self.encoding[0], errors=self.encoding[1])
             old = None
             if self.stdout != self._original_stdout:
                 old = self.stdout
@@ -2664,7 +2667,7 @@ Enter ".help" for instructions
             finally:
                 f.close()
         else:
-            f = codecs.open(cmd[0], "r", self.encoding[0])
+            f = open(cmd[0], "r", encoding=self.encoding[0])
             try:
                 try:
                     self.push_input()

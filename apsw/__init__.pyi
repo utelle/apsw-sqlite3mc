@@ -2,13 +2,22 @@
 import sys
 
 from typing import Optional, Callable, Any, Iterator, Iterable, Sequence, Literal, Protocol, TypeAlias, final
-from collections.abc import Mapping
+import collections.abc
 import array
 import types
 
-SQLiteValue = None | int | float | bytes | str
+# Anything that resembles a dictionary
+Mapping: TypeAlias = collections.abc.Mapping
+
+# Anything that resembles a sequence of bytes
+if sys.version_info >= (3, 12):
+    Buffer: TypeAlias = collections.abc.Buffer
+else:
+    Buffer: TypeAlias = bytes
+
+SQLiteValue = None | int | float | Buffer | str
 """SQLite supports 5 types - None (NULL), 64 bit signed int, 64 bit
-float, bytes, and str (unicode text)"""
+float, bytes (Buffer), and str (unicode text)"""
 
 SQLiteValues = tuple[SQLiteValue, ...]
 "A sequence of zero or more SQLiteValue"
@@ -78,13 +87,13 @@ WindowT = Any
 WindowStep = Callable[[WindowT, *SQLiteValues], None]
 """Window function step takes zero or more SQLiteValues"""
 
-WindowFinal =    Callable[[WindowT, *SQLiteValues], SQLiteValue]
+WindowFinal = Callable[[WindowT, *SQLiteValues], SQLiteValue]
 """Window function final takes zero or more SQLiteValues, and returns a SQLiteValue"""
 
 WindowValue = Callable[[WindowT], SQLiteValue]
 """Window function value returns the current  SQLiteValue"""
 
-WindowInverse =  Callable[[WindowT, *SQLiteValues], None]
+WindowInverse = Callable[[WindowT, *SQLiteValues], None]
 """Window function inverse takes zero or more SQLiteValues"""
 
 WindowFactory = Callable[[], WindowClass | tuple[WindowT, WindowStep, WindowFinal, WindowValue, WindowInverse]]
@@ -127,6 +136,18 @@ from the SQL"""
 
 FTS5QueryPhrase = Callable[[FTS5ExtensionApi, Any], None]
 """Callback from :meth:`FTS5ExtensionApi.query_phrase`"""
+
+# The Session extension allows streaming of inputs and outputs
+
+SessionStreamInput = Callable[[int], Buffer]
+"""Streaming input function that is called with a number of bytes requested
+returning up to that many bytes, and zero length for end of file"""
+
+ChangesetInput = SessionStreamInput | Buffer
+"""Changeset input can either be a streaming callback or data"""
+
+SessionStreamOutput = Callable[[memoryview], None]
+"""Streaming output callable is called with each block of streaming data"""
 
 SQLITE_VERSION_NUMBER: int
 """The integer version number of SQLite that APSW was compiled
@@ -345,8 +366,8 @@ memoryused = memory_used ## OLD-NAME
 
 no_change: object
 """A sentinel value used to indicate no change in a value when
-used with :meth:`VTCursor.ColumnNoChange` and
-:meth:`VTTable.UpdateChangeRow`"""
+used with :meth:`VTCursor.ColumnNoChange`,
+:meth:`VTTable.UpdateChangeRow`, and :attr:`TableChange.new`."""
 
 def pyobject(object: Any):
     """Indicates a Python object is being provided as a
@@ -369,6 +390,13 @@ def release_memory(amount: int) -> int:
     ...
 
 releasememory = release_memory ## OLD-NAME
+
+def session_config(op: int, *args: Any) -> Any:
+    """:param op: One of the `sqlite3session options <https://www.sqlite.org/session/c_session_config_strmsize.html>`__
+    :param args: Zero or more arguments as appropriate for *op*
+
+     Calls: `sqlite3session_config <https://sqlite.org/session/sqlite3session_config.html>`__"""
+    ...
 
 def set_default_vfs(name: str) -> None:
     """Sets the default vfs to *name* which must be an existing vfs.
@@ -505,6 +533,7 @@ vfsnames = vfs_names ## OLD-NAME
 @final
 class Backup:
     """You create a backup instance by calling :meth:`Connection.backup`."""
+
     def close(self, force: bool = False) -> None:
         """Does the same thing as :meth:`~Backup.finish`.  This extra api is
         provided to give the same api as other APSW objects and files.
@@ -588,6 +617,7 @@ class Blob:
       <https://sqlite.org/lang_corefunc.html>`_ function.
 
     See the :ref:`example <example_blob_io>`."""
+
     def close(self, force: bool = False) -> None:
         """Closes the blob.  Note that even if an error occurs the blob is
         still closed.
@@ -688,10 +718,10 @@ class Blob:
         """Returns the current offset."""
         ...
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: Buffer) -> None:
         """Writes the data to the blob.
 
-        :param data: bytes to write
+        :param data: Buffer to write
 
         :raises TypeError: Wrong data type
 
@@ -703,9 +733,166 @@ class Blob:
         Calls: `sqlite3_blob_write <https://sqlite.org/c3ref/blob_write.html>`__"""
         ...
 
+@final
+class ChangesetBuilder:
+    """This object wraps a `sqlite3_changegroup <https://sqlite.org/session/changegroup.html>`__
+    letting you concatenate changesets and individual :class:`TableChange` into one larger
+    changeset."""
+
+    def add(self, changeset: ChangesetInput) -> None:
+        """:param changeset: The changeset as the bytes, or a stream
+
+        Adds the changeset to the builder
+
+        Calls:
+          * `sqlite3changegroup_add <https://sqlite.org/session/sqlite3changegroup_add.html>`__
+          * `sqlite3changegroup_add_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
+    def add_change(self, change: TableChange) -> None:
+        """:param change: An individual change to add.
+
+        You can obtain :class:`TableChange` from :meth:`Changeset.iter` or from the conflict callback
+        of :meth:`Changeset.apply`.
+
+        Calls: `sqlite3changegroup_add_change <https://sqlite.org/session/sqlite3changegroup_add_change.html>`__"""
+        ...
+
+    def close(self) -> None:
+        """Releases the builder
+
+        Calls: `sqlite3changegroup_delete <https://sqlite.org/session/sqlite3changegroup_delete.html>`__"""
+        ...
+
+    def __init__(self):
+        """Creates a new empty builder.
+
+        Calls: `sqlite3changegroup_new <https://sqlite.org/session/sqlite3changegroup_new.html>`__"""
+        ...
+
+    def output(self) -> bytes:
+        """Produces a changeset of what was built so far
+
+        Calls: `sqlite3changegroup_output <https://sqlite.org/session/sqlite3changegroup_output.html>`__"""
+        ...
+
+    def output_stream(self, output: SessionStreamOutput) -> None:
+        """Produces a streaming changeset of what was built so far
+
+        Calls: `sqlite3changegroup_output_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
+    def schema(self, db: Connection, schema: str) -> None:
+        """Ensures the changesets comply with the tables in the database
+
+        :param db: Connection to consult
+        :param schema: `main`, `temp`, the name in `ATTACH <https://sqlite.org/lang_attach.html>`__
+
+        You will get :exc:`MisuseError` if changes have already been added, or this method has
+        already been called.
+
+        Calls: `sqlite3changegroup_schema <https://sqlite.org/session/sqlite3changegroup_schema.html>`__"""
+        ...
+
+class Changeset:
+    """Provides changeset (including patchset) related methods.  Note that
+    all methods are static (belong to the class).  There is no Changeset
+    object.   On input Changesets can be a :class:`collections.abc.Buffer`
+    (anything that resembles a sequence of bytes), or
+    :class:`SessionStreamInput` which provides the bytes in chunks from a
+    callback.
+
+    Output is bytes, or :class:`SessionStreamOutput` (chunks in a callback).
+
+    The streaming versions are useful when you are concerned about memory
+    usage, or where changesets are larger than 2GB (the SQLite limit)."""
+
+    @staticmethod
+    def apply(changeset: ChangesetInput, db: Connection, *, filter: Optional[Callable[[str], bool]] = None, conflict: Optional[Callable[[int,TableChange], int]] = None, flags: int = 0, rebase: bool = False) -> bytes | None:
+        """Applies a changeset to a database.
+
+        :param source: The changeset either as the bytes, or a stream
+        :param db: The connection to make the change on
+        :param filter: Callback to determine if changes to a table are done
+        :param conflict: Callback to handle a change that cannot be applied
+        :param flags: `v2 API flags <https://www.sqlite.org/session/c_changesetapply_fknoaction.html>`__.
+        :param rebase: If ``True`` then return :class:`rebase <Rebaser>` information, else :class:`None`.
+
+        Filter
+        ------
+
+        Callback called with a table name, once per table that has a change.  It should return ``True``
+        if changes to that table should be applied, or ``False`` to ignore them.  If not supplied then
+        all tables have changes applied.
+
+        Conflict
+        --------
+
+        When a change cannot be applied the conflict handler determines what
+        to do.  It is called with a `conflict reason
+        <https://www.sqlite.org/session/c_changeset_conflict.html>`__ as the
+        first parameter, and a :class:`TableChange` as the second.  Possible
+        conflicts are `described here
+        <https://sqlite.org/sessionintro.html#conflicts>`__.
+
+        It should return the `action to take <https://www.sqlite.org/session/c_changeset_abort.html>`__.
+
+        If not supplied or on error, ``SQLITE_CHANGESET_ABORT`` is returned.
+
+        See the :ref:`example <example_applying>`.
+
+        Calls:
+          * `sqlite3changeset_apply_v2 <https://sqlite.org/session/sqlite3changeset_apply.html>`__
+          * `sqlite3changeset_apply_v2_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
+    @staticmethod
+    def concat(A: Buffer, B: Buffer) -> bytes:
+        """Returns combined changesets
+
+        Calls: `sqlite3changeset_concat <https://sqlite.org/session/sqlite3changeset_concat.html>`__"""
+        ...
+
+    @staticmethod
+    def concat_stream(A: SessionStreamInput, B: SessionStreamInput, output: SessionStreamOutput) -> None:
+        """Streaming concatenate two changesets
+
+        Calls: `sqlite3changeset_concat_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
+    @staticmethod
+    def invert(changeset: Buffer) -> bytes:
+        """Produces a changeset that reverses the effect of
+        the supplied changeset.
+
+        Calls: `sqlite3changeset_invert <https://sqlite.org/session/sqlite3changeset_invert.html>`__"""
+        ...
+
+    @staticmethod
+    def invert_stream(changeset: SessionStreamInput, output: SessionStreamOutput) -> None:
+        """Streaming reverses the effect of the supplied changeset.
+
+        Calls: `sqlite3changeset_invert_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
+    @staticmethod
+    def iter(changeset: ChangesetInput, *, flags: int = 0) -> Iterator[TableChange]:
+        """Provides an iterator over a changeset.  You can supply the changeset as
+         the bytes, or streamed via a callable.
+
+         If flags is non-zero them the ``v2`` API is used (marked as experimental)
+
+        Calls:
+          * `sqlite3changeset_start <https://sqlite.org/session/sqlite3changeset_start.html>`__
+          * `sqlite3changeset_start_v2 <https://sqlite.org/session/sqlite3changeset_start.html>`__
+          * `sqlite3changeset_start_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__
+          * `sqlite3changeset_start_v2_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
 class Connection:
     """This object wraps a `sqlite3 pointer
     <https://sqlite.org/c3ref/sqlite3.html>`_."""
+
     authorizer: Optional[Authorizer]
     """While `preparing <https://sqlite.org/c3ref/prepare.html>`_
     statements, SQLite will call any defined authorizer to see if a
@@ -1166,7 +1353,7 @@ class Connection:
         Calls: `sqlite3_db_name <https://sqlite.org/c3ref/db_name.html>`__"""
         ...
 
-    def deserialize(self, name: str, contents: bytes) -> None:
+    def deserialize(self, name: str, contents: Buffer) -> None:
         """Replaces the named database with an in-memory copy of *contents*.
         *name* is `main`, `temp`, the name in `ATTACH
         <https://sqlite.org/lang_attach.html>`__
@@ -1768,6 +1955,12 @@ class Connection:
 
     setwalhook = set_wal_hook ## OLD-NAME
 
+    def setlk_timeout(self, ms: int, flags: int) -> None:
+        """Sets a VFS level timeout.
+
+        Calls: `sqlite3_setlk_timeout <https://sqlite.org/c3ref/setlk_timeout.html>`__"""
+        ...
+
     def sqlite3_pointer(self) -> int:
         """Returns the underlying `sqlite3 *
         <https://sqlite.org/c3ref/sqlite3.html>`_ for the connection. This
@@ -1960,6 +2153,7 @@ class Connection:
 
 class Cursor:
     """"""
+
     bindings_count: int
     """How many bindings are in the statement.  The ``?`` form
     results in the largest number.  For example you could do
@@ -2252,6 +2446,7 @@ class FTS5ExtensionApi:
     passed as the first parameter to auxiliary functions.
 
     See :ref:`the example <example_fts5_auxfunc>`."""
+
     aux_data: Any
     """You can store an object as `auxiliary data <https://www.sqlite.org/fts5.html#xSetAuxdata>`__
     which is available across matching rows.  It starts out as :class:`None`.
@@ -2341,7 +2536,7 @@ class FTS5ExtensionApi:
     rowid: int
     """Rowid of the `current row <https://www.sqlite.org/fts5.html#xGetAuxdata>`__"""
 
-    def tokenize(self, utf8: bytes, locale: Optional[str], *, include_offsets: bool = True, include_colocated: bool = True) -> list:
+    def tokenize(self, utf8: Buffer, locale: Optional[str], *, include_offsets: bool = True, include_colocated: bool = True) -> list:
         """`Tokenizes the utf8 <https://www.sqlite.org/fts5.html#xTokenize_v2>`__.  FTS5 sets the reason to ``FTS5_TOKENIZE_AUX``.
         See :meth:`apsw.FTS5Tokenizer.__call__` for details."""
         ...
@@ -2349,15 +2544,16 @@ class FTS5ExtensionApi:
 @final
 class FTS5Tokenizer:
     """Wraps a registered tokenizer.  Returned by :meth:`Connection.fts5_tokenizer`."""
+
     args: tuple[str]
     """The arguments the tokenizer was created with."""
 
-    def __call__(self, utf8: bytes, flags: int,  locale: Optional[str], *, include_offsets: bool = True, include_colocated: bool = True) -> TokenizerResult:
+    def __call__(self, utf8: Buffer, flags: int,  locale: Optional[str], *, include_offsets: bool = True, include_colocated: bool = True) -> TokenizerResult:
         """Does a tokenization, returning a list of the results.  If you have no
         interest in token offsets or colocated tokens then they can be omitted from
         the results.
 
-        :param utf8: Input bytes
+        :param utf8: Input buffer
         :param reason: :data:`Reason <apsw.mapping_fts5_tokenize_reason>` flag
         :param include_offsets: Returned list includes offsets into utf8 for each token
         :param include_colocated: Returned list can include colocated tokens
@@ -2426,6 +2622,7 @@ class IndexInfo:
 
     :meth:`apsw.ext.index_info_to_dict` provides a convenient
     representation of this object as a :class:`dict`."""
+
     colUsed: set[int]
     """(Read-only) Columns used by the statement.  Note that a set is returned, not
     the underlying integer."""
@@ -2522,6 +2719,224 @@ class IndexInfo:
         ...
 
 @final
+class Rebaser:
+    """This object wraps a `sqlite3_rebaser
+    <https://www.sqlite.org/session/rebaser.html>`__ object."""
+
+    def configure(self, cr: Buffer) -> None:
+        """Tells the rebaser about conflict resolutions made in an earlier
+        :meth:`Changeset.apply`.
+
+        Calls: `sqlite3rebaser_configure <https://sqlite.org/session/sqlite3rebaser_configure.html>`__"""
+        ...
+
+    def __init__(self):
+        """Starts a new rebaser.
+
+        Calls: `sqlite3rebaser_create <https://sqlite.org/session/sqlite3rebaser_create.html>`__"""
+        ...
+
+    def rebase(self, changeset: Buffer) -> bytes:
+        """Produces a new changeset rebased according to :meth:`configure` calls made.
+
+        Calls: `sqlite3rebaser_rebase <https://sqlite.org/session/sqlite3rebaser_rebase.html>`__"""
+        ...
+
+    def rebase_stream(self, changeset: SessionStreamInput, output: SessionStreamOutput) -> None:
+        """Produces a new changeset rebased according to :meth:`configure` calls made, using streaming
+        input and output.
+
+        Calls: `sqlite3rebaser_rebase_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
+class Session:
+    """This object wraps a `sqlite3_session
+    <https://www.sqlite.org/session/session.html>`__ object."""
+
+    def attach(self, name: Optional[str] = None) -> None:
+        """Attach to a specific table, or all tables if no name is provided.  The
+        table does not need to exist at the time of the call.  You can call
+        this multiple times.
+
+        .. seealso::
+
+           :meth:`table_filter`
+
+        Calls: `sqlite3session_attach <https://sqlite.org/session/sqlite3session_attach.html>`__"""
+        ...
+
+    def changeset(self) -> bytes:
+        """Produces a changeset of the session so far.
+
+        Calls: `sqlite3session_changeset <https://sqlite.org/session/sqlite3session_changeset.html>`__"""
+        ...
+
+    changeset_size: int
+    """Returns upper limit on changeset size, but only if :meth:`Session.config`
+    was used to enable it.  Otherwise it will be zero.
+
+    Calls: `sqlite3session_changeset_size <https://sqlite.org/session/sqlite3session_changeset_size.html>`__"""
+
+    def changeset_stream(self, output: SessionStreamOutput) -> None:
+        """Produces a changeset of the session so far in a stream
+
+        Calls: `sqlite3session_changeset_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
+    def close(self) -> None:
+        """Ends the session object.  APSW ensures that all
+        Session objects are closed before the database is closed
+        so there is no need to manually call this.
+
+        Calls: `sqlite3session_delete <https://sqlite.org/session/sqlite3session_delete.html>`__"""
+        ...
+
+    def config(self, op: int, *args: Any) -> Any:
+        """Set or get `configuration values <https://www.sqlite.org/session/c_session_objconfig_rowid.html>`__
+
+        For example :code:`session.config(apsw.SQLITE_SESSION_OBJCONFIG_SIZE, -1)` tells you
+        if size information is enabled.
+
+        Calls: `sqlite3session_object_config <https://sqlite.org/session/sqlite3session_object_config.html>`__"""
+        ...
+
+    def diff(self, from_schema: str, table: str) -> None:
+        """Loads the changes necessary to update the named ``table`` in the attached database
+        ``from_schema`` to match the same named table in the database this session is
+        attached to.
+
+        See the :ref:`example <example_session_diff>`.
+
+        .. note::
+
+          You must use :meth:`attach` (or use :meth:`table_filter`) to attach to
+          the table before running this method otherwise nothing is recorded.
+
+        Calls: `sqlite3session_diff <https://sqlite.org/session/sqlite3session_diff.html>`__"""
+        ...
+
+    enabled: bool
+    """Get or change if this session is recording changes.  Disabling only
+    stops recording rows not already part of the changeset.
+
+    Calls: `sqlite3session_enable <https://sqlite.org/session/sqlite3session_enable.html>`__"""
+
+    indirect: bool
+    """Get or change if this session is in indirect mode
+
+    Calls: `sqlite3session_indirect <https://sqlite.org/session/sqlite3session_indirect.html>`__"""
+
+    def __init__(self, db: Connection, schema: str):
+        """Starts a new session.
+
+        :param connection: Which database to operate on
+        :param schema: `main`, `temp`, the name in `ATTACH <https://sqlite.org/lang_attach.html>`__
+
+        Calls: `sqlite3session_create <https://sqlite.org/session/sqlite3session_create.html>`__"""
+        ...
+
+    is_empty: bool
+    """True if no changes have been recorded.
+
+    Calls: `sqlite3session_isempty <https://sqlite.org/session/sqlite3session_isempty.html>`__"""
+
+    memory_used: int
+    """How many bytes of memory have been used to record session changes.
+
+    Calls: `sqlite3session_memory_used <https://sqlite.org/session/sqlite3session_memory_used.html>`__"""
+
+    def patchset(self) -> bytes:
+        """Produces a patchset of the session so far.  Patchsets do not include
+        before values of changes, making them smaller, but also harder to detect
+        conflicts.
+
+        Calls: `sqlite3session_patchset <https://sqlite.org/session/sqlite3session_patchset.html>`__"""
+        ...
+
+    def patchset_stream(self, output: SessionStreamOutput) -> None:
+        """Produces a patchset of the session so far in a stream
+
+        Calls: `sqlite3session_patchset_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__"""
+        ...
+
+    def table_filter(self, callback: Callable[[str], bool]) -> None:
+        """Register a callback that says if changes to the named table should be
+        recorded.  If your callback has an exception then ``False`` is
+        returned.
+
+        .. seealso::
+
+          :meth:`attach`
+
+        Calls: `sqlite3session_table_filter <https://sqlite.org/session/sqlite3session_table_filter.html>`__"""
+        ...
+
+@final
+class TableChange:
+    """Represents a `changed row
+    <https://sqlite.org/session/changeset_iter.html>`__.  They come from
+    :meth:`changeset iteration <Changeset.iter>` and from the
+    :meth:`conflict handler in apply <Changeset.apply>`.
+
+    A TableChange is only valid when your conflict handler is active, or
+    has just been provided by a changeset iterator.  It goes out of scope
+    after your conflict handler returns, or the iterator moves to the next
+    entry.  You will get :exc:`~apsw.InvalidContextError` if you try to
+    access fields when out of scope.  This means you can't save
+    TableChanges for later, and need to copy out any information you need."""
+
+    column_count: int
+    """ Number of columns in the affected table"""
+
+    conflict: tuple[SQLiteValue, ...] | None
+    """:class:`None` if not applicable (not in a conflict).  Otherwise a
+    tuple of values for the conflicting row.
+
+    Calls: `sqlite3changeset_conflict <https://sqlite.org/session/sqlite3changeset_conflict.html>`__"""
+
+    fk_conflicts: int | None
+    """The number of known foreign key conflicts, or :class:`None` if not in a
+    conflict handler.
+
+    Calls: `sqlite3changeset_fk_conflicts <https://sqlite.org/session/sqlite3changeset_fk_conflicts.html>`__"""
+
+    indirect: bool
+    """``True`` if this is an `indirect <https://sqlite.org/session/sqlite3session_indirect.html>`__
+    change - for example made by triggers or foreign keys."""
+
+    name: str
+    """ Name of the affected table"""
+
+    new: tuple[SQLiteValue | Literal[no_change], ...] | None
+    """:class:`None` if not applicable (like a DELETE).  Otherwise a
+    tuple of the new values for the row, with :attr:`apsw.no_change`
+    if no value was provided for that column.
+
+    Calls: `sqlite3changeset_new <https://sqlite.org/session/sqlite3changeset_new.html>`__"""
+
+    old: tuple[SQLiteValue | Literal[no_change], ...] | None
+    """:class:`None` if not applicable (like an INSERT).  Otherwise a tuple
+    of the old values for the row before this change, with
+    :attr:`apsw.no_change` if no value was provided for that column,
+
+    Calls: `sqlite3changeset_old <https://sqlite.org/session/sqlite3changeset_old.html>`__"""
+
+    op: str
+    """ The operation code as a string  ``INSERT``,
+     ``DELETE``, or ``UPDATE``.  See :attr:`opcode`
+     for this as a number."""
+
+    opcode: int
+    """ The operation code - ``apsw.SQLITE_INSERT``,
+     ``apsw.SQLITE_DELETE``, or ``apsw.SQLITE_UPDATE``.
+     See :attr:`op` for this as a string."""
+
+    pk_columns: set[int]
+    """Which columns make up the primary key for this table
+
+    Calls: `sqlite3changeset_pk <https://sqlite.org/session/sqlite3changeset_pk.html>`__"""
+
+@final
 class URIFilename:
     """SQLite packs `uri parameters
     <https://sqlite.org/uri.html>`__ and the filename together   This class
@@ -2536,6 +2951,7 @@ class URIFilename:
     which knows how to get the name back out.  The URIFilename is
     only valid for the duration of the xOpen call.  If you save
     and use the object later you will get an exception."""
+
     def filename(self) -> str:
         """Returns the filename."""
         ...
@@ -2574,6 +2990,7 @@ class VFSFcntlPragma:
 
     It is only valid while in :meth:`VFSFile.xFileControl`, and using
     outside of that will result in memory corruption and crashes."""
+
     def __init__(self, pointer: int):
         """The pointer must be what your xFileControl method received."""
         ...
@@ -2591,6 +3008,7 @@ class VFSFile:
     """Wraps access to a file.  You only need to derive from this class
     if you want the file object returned from :meth:`VFS.xOpen` to
     inherit from an existing VFS implementation."""
+
     def excepthook(self, etype: type[BaseException], evalue: BaseException, etraceback: Optional[types.TracebackType]) ->None:
         """Called when there has been an exception in a :class:`VFSFile`
         routine, and it can't be reported to the caller as usual.
@@ -2724,7 +3142,7 @@ class VFSFile:
         family of constants."""
         ...
 
-    def xWrite(self, data: bytes, offset: int) -> None:
+    def xWrite(self, data: Buffer, offset: int) -> None:
         """Write the *data* starting at absolute *offset*. You must write all the data
         requested, or return an error. If you have the file open for
         non-blocking I/O or if signals happen then it is possible for the
@@ -2738,6 +3156,7 @@ class VFS:
     """Provides operating system access.  You can get an overview in the
     `SQLite documentation <https://sqlite.org/c3ref/vfs.html>`_.  To
     create a VFS your Python class must inherit from :class:`VFS`."""
+
     def excepthook(self, etype: type[BaseException], evalue: BaseException, etraceback: Optional[types.TracebackType]) -> Any:
         """Called when there has been an exception in a :class:`VFS` routine,
         and it can't be reported to the caller as usual.
@@ -2959,6 +3378,7 @@ class VTCursor(Protocol):
     The :class:`VTCursor` object is used for iterating over a table.
     There may be many cursors simultaneously so each one needs to keep
     track of where in the table it is."""
+
     def Close(self) -> None:
         """This is the destructor for the cursor. Note that you must
         cleanup. The method will not be called again if you raise an
@@ -3055,6 +3475,7 @@ class VTModule(Protocol):
     The create step is to tell SQLite about the existence of the table.
     Any number of tables referring to the same module can be made this
     way."""
+
     def Connect(self, connection: Connection, modulename: str, databasename: str, tablename: str, *args: tuple[SQLiteValue, ...])  -> tuple[str, VTTable]:
         """The parameters and return are identical to
         :meth:`~VTModule.Create`.  This method is called
@@ -3131,6 +3552,7 @@ class VTTable(Protocol):
 
     It is possible to `not have a rowid
     <https://www.sqlite.org/vtab.html#_without_rowid_virtual_tables_>`__"""
+
     def Begin(self) -> None:
         """This function is used as part of transactions.  You do not have to
         provide the method."""
@@ -3453,6 +3875,7 @@ class zeroblob:
     You can then overwrite parts in smaller chunks, without having
     to do it all at once.  The :ref:`example <example_blob_io>` shows
     how to use it."""
+
     def __init__(self, size: int):
         """:param size: Number of zeroed bytes to create"""
         ...
@@ -3513,6 +3936,32 @@ SQLITE_CANTOPEN_NOTEMPDIR: int = 270
 """For `Extended Result Codes <https://sqlite.org/rescode.html>'__"""
 SQLITE_CANTOPEN_SYMLINK: int = 1550
 """For `Extended Result Codes <https://sqlite.org/rescode.html>'__"""
+SQLITE_CHANGESETAPPLY_FKNOACTION: int = 8
+"""For `Flags for sqlite3changeset_apply_v2 <https://sqlite.org/session/c_changesetapply_fknoaction.html>'__"""
+SQLITE_CHANGESETAPPLY_IGNORENOOP: int = 4
+"""For `Flags for sqlite3changeset_apply_v2 <https://sqlite.org/session/c_changesetapply_fknoaction.html>'__"""
+SQLITE_CHANGESETAPPLY_INVERT: int = 2
+"""For `Flags for sqlite3changeset_apply_v2 <https://sqlite.org/session/c_changesetapply_fknoaction.html>'__"""
+SQLITE_CHANGESETAPPLY_NOSAVEPOINT: int = 1
+"""For `Flags for sqlite3changeset_apply_v2 <https://sqlite.org/session/c_changesetapply_fknoaction.html>'__"""
+SQLITE_CHANGESETSTART_INVERT: int = 2
+"""For `Flags for sqlite3changeset_start_v2 <https://sqlite.org/session/c_changesetstart_invert.html>'__"""
+SQLITE_CHANGESET_ABORT: int = 2
+"""For `Constants Returned By The Conflict Handler <https://sqlite.org/session/c_changeset_abort.html>'__"""
+SQLITE_CHANGESET_CONFLICT: int = 3
+"""For `Constants Passed To The Conflict Handler <https://sqlite.org/session/c_changeset_conflict.html>'__"""
+SQLITE_CHANGESET_CONSTRAINT: int = 4
+"""For `Constants Passed To The Conflict Handler <https://sqlite.org/session/c_changeset_conflict.html>'__"""
+SQLITE_CHANGESET_DATA: int = 1
+"""For `Constants Passed To The Conflict Handler <https://sqlite.org/session/c_changeset_conflict.html>'__"""
+SQLITE_CHANGESET_FOREIGN_KEY: int = 5
+"""For `Constants Passed To The Conflict Handler <https://sqlite.org/session/c_changeset_conflict.html>'__"""
+SQLITE_CHANGESET_NOTFOUND: int = 2
+"""For `Constants Passed To The Conflict Handler <https://sqlite.org/session/c_changeset_conflict.html>'__"""
+SQLITE_CHANGESET_OMIT: int = 0
+"""For `Constants Returned By The Conflict Handler <https://sqlite.org/session/c_changeset_abort.html>'__"""
+SQLITE_CHANGESET_REPLACE: int = 1
+"""For `Constants Returned By The Conflict Handler <https://sqlite.org/session/c_changeset_abort.html>'__"""
 SQLITE_CHECKPOINT_FULL: int = 1
 """For `Checkpoint Mode Values <https://sqlite.org/c3ref/c_checkpoint_full.html>'__"""
 SQLITE_CHECKPOINT_PASSIVE: int = 0
@@ -3750,6 +4199,8 @@ SQLITE_ERROR_SNAPSHOT: int = 769
 SQLITE_FAIL: int = 3
 """For `Conflict resolution modes <https://sqlite.org/c3ref/c_fail.html>'__"""
 SQLITE_FCNTL_BEGIN_ATOMIC_WRITE: int = 31
+"""For `Standard File Control Opcodes <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html>'__"""
+SQLITE_FCNTL_BLOCK_ON_CONNECT: int = 44
 """For `Standard File Control Opcodes <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html>'__"""
 SQLITE_FCNTL_BUSYHANDLER: int = 15
 """For `Standard File Control Opcodes <https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html>'__"""
@@ -4151,6 +4602,14 @@ SQLITE_SELECT: int = 21
 """For `Authorizer Action Codes <https://sqlite.org/c3ref/c_alter_table.html>'__"""
 SQLITE_SELFORDER1: int = 33554432
 """For `Function Flags <https://sqlite.org/c3ref/c_deterministic.html>'__"""
+SQLITE_SESSION_CONFIG_STRMSIZE: int = 1
+"""For `Values for sqlite3session_config <https://sqlite.org/session/c_session_config_strmsize.html>'__"""
+SQLITE_SESSION_OBJCONFIG_ROWID: int = 2
+"""For `Options for sqlite3session_object_config <https://sqlite.org/session/c_session_objconfig_rowid.html>'__"""
+SQLITE_SESSION_OBJCONFIG_SIZE: int = 1
+"""For `Options for sqlite3session_object_config <https://sqlite.org/session/c_session_objconfig_rowid.html>'__"""
+SQLITE_SETLK_BLOCK_ON_CONNECT: int = 1
+"""For `Flags for sqlite3_setlk_timeout() <https://sqlite.org/c3ref/c_setlk_block_on_connect.html>'__"""
 SQLITE_SHM_EXCLUSIVE: int = 8
 """For `Flags for the xShmLock VFS method <https://sqlite.org/c3ref/c_shm_exclusive.html>'__"""
 SQLITE_SHM_LOCK: int = 2
@@ -4385,16 +4844,16 @@ mapping_file_control: dict[str | int, int | str]
 """Standard File Control Opcodes mapping names to int and int to names.
 Doc at https://sqlite.org/c3ref/c_fcntl_begin_atomic_write.html
 
-SQLITE_FCNTL_BEGIN_ATOMIC_WRITE SQLITE_FCNTL_BUSYHANDLER
-SQLITE_FCNTL_CHUNK_SIZE SQLITE_FCNTL_CKPT_DONE SQLITE_FCNTL_CKPT_START
-SQLITE_FCNTL_CKSM_FILE SQLITE_FCNTL_COMMIT_ATOMIC_WRITE
-SQLITE_FCNTL_COMMIT_PHASETWO SQLITE_FCNTL_DATA_VERSION
-SQLITE_FCNTL_EXTERNAL_READER SQLITE_FCNTL_FILE_POINTER
-SQLITE_FCNTL_GET_LOCKPROXYFILE SQLITE_FCNTL_HAS_MOVED
-SQLITE_FCNTL_JOURNAL_POINTER SQLITE_FCNTL_LAST_ERRNO
-SQLITE_FCNTL_LOCKSTATE SQLITE_FCNTL_LOCK_TIMEOUT
-SQLITE_FCNTL_MMAP_SIZE SQLITE_FCNTL_NULL_IO SQLITE_FCNTL_OVERWRITE
-SQLITE_FCNTL_PDB SQLITE_FCNTL_PERSIST_WAL
+SQLITE_FCNTL_BEGIN_ATOMIC_WRITE SQLITE_FCNTL_BLOCK_ON_CONNECT
+SQLITE_FCNTL_BUSYHANDLER SQLITE_FCNTL_CHUNK_SIZE
+SQLITE_FCNTL_CKPT_DONE SQLITE_FCNTL_CKPT_START SQLITE_FCNTL_CKSM_FILE
+SQLITE_FCNTL_COMMIT_ATOMIC_WRITE SQLITE_FCNTL_COMMIT_PHASETWO
+SQLITE_FCNTL_DATA_VERSION SQLITE_FCNTL_EXTERNAL_READER
+SQLITE_FCNTL_FILE_POINTER SQLITE_FCNTL_GET_LOCKPROXYFILE
+SQLITE_FCNTL_HAS_MOVED SQLITE_FCNTL_JOURNAL_POINTER
+SQLITE_FCNTL_LAST_ERRNO SQLITE_FCNTL_LOCKSTATE
+SQLITE_FCNTL_LOCK_TIMEOUT SQLITE_FCNTL_MMAP_SIZE SQLITE_FCNTL_NULL_IO
+SQLITE_FCNTL_OVERWRITE SQLITE_FCNTL_PDB SQLITE_FCNTL_PERSIST_WAL
 SQLITE_FCNTL_POWERSAFE_OVERWRITE SQLITE_FCNTL_PRAGMA SQLITE_FCNTL_RBU
 SQLITE_FCNTL_RESERVE_BYTES SQLITE_FCNTL_RESET_CACHE
 SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE SQLITE_FCNTL_SET_LOCKPROXYFILE
@@ -4472,6 +4931,51 @@ SQLITE_LOCKED SQLITE_MISMATCH SQLITE_MISUSE SQLITE_NOLFS SQLITE_NOMEM
 SQLITE_NOTADB SQLITE_NOTFOUND SQLITE_NOTICE SQLITE_OK SQLITE_PERM
 SQLITE_PROTOCOL SQLITE_RANGE SQLITE_READONLY SQLITE_ROW SQLITE_SCHEMA
 SQLITE_TOOBIG SQLITE_WARNING"""
+
+mapping_session_changeset_apply_v2_flags: dict[str | int, int | str]
+"""Flags for sqlite3changeset_apply_v2 mapping names to int and int to names.
+Doc at https://sqlite.org/session/c_changesetapply_fknoaction.html
+
+SQLITE_CHANGESETAPPLY_FKNOACTION SQLITE_CHANGESETAPPLY_IGNORENOOP
+SQLITE_CHANGESETAPPLY_INVERT SQLITE_CHANGESETAPPLY_NOSAVEPOINT"""
+
+mapping_session_changeset_start_v2_flags: dict[str | int, int | str]
+"""Flags for sqlite3changeset_start_v2 mapping names to int and int to names.
+Doc at https://sqlite.org/session/c_changesetstart_invert.html
+
+SQLITE_CHANGESETSTART_INVERT"""
+
+mapping_session_config_options: dict[str | int, int | str]
+"""Values for sqlite3session_config mapping names to int and int to names.
+Doc at https://sqlite.org/session/c_session_config_strmsize.html
+
+SQLITE_SESSION_CONFIG_STRMSIZE"""
+
+mapping_session_conflict: dict[str | int, int | str]
+"""Constants Passed To The Conflict Handler mapping names to int and int to names.
+Doc at https://sqlite.org/session/c_changeset_conflict.html
+
+SQLITE_CHANGESET_CONFLICT SQLITE_CHANGESET_CONSTRAINT
+SQLITE_CHANGESET_DATA SQLITE_CHANGESET_FOREIGN_KEY
+SQLITE_CHANGESET_NOTFOUND"""
+
+mapping_session_conflict_response: dict[str | int, int | str]
+"""Constants Returned By The Conflict Handler mapping names to int and int to names.
+Doc at https://sqlite.org/session/c_changeset_abort.html
+
+SQLITE_CHANGESET_ABORT SQLITE_CHANGESET_OMIT SQLITE_CHANGESET_REPLACE"""
+
+mapping_session_object_config_options: dict[str | int, int | str]
+"""Options for sqlite3session_object_config mapping names to int and int to names.
+Doc at https://sqlite.org/session/c_session_objconfig_rowid.html
+
+SQLITE_SESSION_OBJCONFIG_ROWID SQLITE_SESSION_OBJCONFIG_SIZE"""
+
+mapping_setlk_timeout_flags: dict[str | int, int | str]
+"""Flags for sqlite3_setlk_timeout() mapping names to int and int to names.
+Doc at https://sqlite.org/c3ref/c_setlk_block_on_connect.html
+
+SQLITE_SETLK_BLOCK_ON_CONNECT"""
 
 mapping_statement_status: dict[str | int, int | str]
 """Status Parameters for prepared statements mapping names to int and int to names.
@@ -4666,11 +5170,15 @@ class InterruptError(Error):
     :meth:`Connection.interrupt`."""
 
 class InvalidContextError(Error):
-    """Context is no longer valid.  Examples include using an
-    :class:`IndexInfo` outside of the :meth:`VTTable.BestIndexObject`
-    method, a registered :class:`FTS5Tokenizer` when the underlying
-    tokenizer has been deleted/replaced, or :meth:`Connection.vtab_config`
-    when not inside :meth:`VTModule.Create`."""
+    """Context is no longer valid.  Examples include:
+
+    * Using an :class:`IndexInfo` outside of the :meth:`VTTable.BestIndexObject`
+      method
+    * Using a registered :class:`FTS5Tokenizer` when the underlying
+      tokenizer has been deleted/replaced
+    * Using :meth:`Connection.vtab_config` when not inside :meth:`VTModule.Create`
+    * Using a :class:`TableChange` outside of a :meth:`~Changeset.apply` conflict
+      handler, or when no longer the current :meth:`Changeset.iter` item"""
 
 class LockedError(Error):
     """`SQLITE_LOCKED <https://sqlite.org/rescode.html#locked>`__.  Shared

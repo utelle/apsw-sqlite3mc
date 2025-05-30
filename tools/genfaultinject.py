@@ -85,6 +85,7 @@ returns = {
     "pointer": """
             convert_value_to_pyobject convert_column_to_pyobject  allocfunccbinfo
             apsw_strdup convertutf8string MakeExistingException get_window_function_context
+            MakeTableChange
 
             PyModule_Create2 PyErr_NewExceptionWithDoc PySet_New
             PyUnicode_New  PyUnicode_AsUTF8 PyObject_GetAttr _PyObject_New PyUnicode_FromString
@@ -100,6 +101,7 @@ returns = {
             PyObject_VectorcallMethod PyObject_Vectorcall PyWeakref_GetObject PyUnicode_DecodeUTF8
             PyLong_FromSsize_t PyLong_FromUnsignedLongLong PyLong_FromSize_t
             PyFrozenSet_New PyType_FromModuleAndSpec PyModule_AddStringConstant
+            PyMemoryView_FromMemory PyObject_CallMethodNoArgs PyType_GenericNew
 
             Connection_fts5_api get_token_value fts5extensionapi_acquire
 
@@ -143,6 +145,23 @@ returns = {
             sqlite3_wal_autocheckpoint sqlite3_wal_checkpoint_v2
 
             sqlite3_prepare
+
+            sqlite3changeset_apply_v2_strm sqlite3changeset_concat_strm
+            sqlite3changeset_invert_strm sqlite3changeset_start_strm sqlite3changeset_start_v2_strm
+            sqlite3session_changeset_strm sqlite3session_patchset_strm sqlite3changegroup_add_strm
+            sqlite3changegroup_output_strm sqlite3rebaser_rebase_strm
+
+            sqlite3changegroup_add sqlite3changegroup_add_change sqlite3changegroup_new sqlite3changegroup_output
+            sqlite3changegroup_schema sqlite3changeset_apply_v2
+            sqlite3changeset_concat sqlite3changeset_conflict sqlite3changeset_fk_conflicts
+            sqlite3changeset_invert sqlite3changeset_new sqlite3changeset_next sqlite3changeset_old
+            sqlite3changeset_op sqlite3changeset_pk sqlite3changeset_start sqlite3changeset_start_v2
+            sqlite3changeset_upgrade sqlite3session_attach sqlite3session_changeset
+            sqlite3session_config sqlite3session_create sqlite3session_diff
+            sqlite3session_object_config sqlite3session_patchset
+            sqlite3rebaser_configure sqlite3rebaser_create
+            sqlite3rebaser_rebase
+
             """.split(),
     # py functions that return a number to indicate failure
     "number": """
@@ -153,13 +172,11 @@ returns = {
         PyStructSequence_InitType2 PyList_Size PyLong_AsInt
         PyList_SetItem
 
-        PyObject_GetBufferContiguous PyObject_GetBuffer
-        PyBuffer_IsContiguous _PyTuple_Resize
+        PyObject_GetBufferContiguous PyObject_GetBuffer PyObject_GetBufferContiguousBounded
+        _PyTuple_Resize
 
         connection_trace_and_exec getfunctionargs
         """.split(),
-    # PyBuffer_IsContiguous is on an error path although the
-    # function itself can't error
 }
 
 # some calls like Py_BuildValue are #defined to _Py_BuildValue_SizeT

@@ -160,10 +160,10 @@ class run_tests(Command):
 
     def run(self):
         import unittest
-        import apsw.tests
+        import apsw.tests.__main__
 
-        apsw.tests.setup()
-        suite = unittest.TestLoader().loadTestsFromModule(apsw.tests)
+        apsw.tests.__main__.setup()
+        suite = unittest.TestLoader().loadTestsFromModule(apsw.tests.__main__)
         # verbosity of zero doesn't print anything, one prints a dot
         # per test and two prints each test name
         result = unittest.TextTestRunner(verbosity=self.show_tests + 1, tb_locals=self.locals).run(suite)
@@ -516,6 +516,7 @@ class apsw_build_ext(beparent):
                 "geopoly",
                 "math_functions",
                 "dbstat_vtab",
+                "session",
             ]
             if not self.omit or "icu" not in self.omit.split(","):
                 if get_icu_config():
@@ -634,6 +635,7 @@ class apsw_build_ext(beparent):
                         "json1",
                         "rbu",
                         "geopoly",
+                        "session",
                     )
                 ):
                     write("Unknown enable " + e, sys.stderr)
@@ -935,7 +937,7 @@ if __name__ == '__main__':
                 undef_macros = [ "NDEBUG" ] if os.environ.get("UNICODE_DEBUG") else [],
             ),
         ],
-        packages=["apsw"],
+        packages=["apsw", "apsw.tests"],
         package_data={"apsw": ["__init__.pyi", "py.typed", "fts_test_strings"]},
         cmdclass={
             "test": run_tests,

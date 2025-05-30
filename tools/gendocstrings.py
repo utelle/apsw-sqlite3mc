@@ -3,8 +3,6 @@
 This implements functionality similar to Argument Clinic.
 
 * Docstrings are available as C symbols, and then used
-* The syntax for __text_signature is used to give a partial type
-  signature
 * Argument parsing is automated
 * Type stubs are generated
 
@@ -45,7 +43,7 @@ docstrings_skip = {
 virtual_table_classes = {"VTCursor", "VTModule", "VTTable"}
 
 # which classes can be subclassed at runtime - all others are marked final
-subclassable = {"Connection", "Cursor", "VFS", "VFSFile", "zeroblob"}
+subclassable = {"Connection", "Cursor", "VFS", "VFSFile", "zeroblob", "Session", "Changeset"}
 
 
 def sqlite_links():
@@ -236,24 +234,10 @@ def fixup(item: dict, eol: str) -> str:
     lines = item["doc"]
     if item["signature"]:
         # cpython can't handle the arg or return type info
-        sig = simple_signature(item["signature"])
         func = item["name"].split(".")[1]
-        lines = [f"""{ func }{ sig }\n--\n\n{ item["name"] }{ item["signature_original"] }\n\n"""] + lines
+        lines = [f"""{ item["name"] }{ item["signature_original"] }\n\n"""] + lines
 
     return cppsafe(lines, eol)
-
-
-def simple_signature(signature: list[dict]) -> str:
-    "Return signature simple enough to be accepted for __text_signature__"
-    res = ["$self"]
-    for param in signature:
-        if param["name"] == "return":
-            continue
-        p = param["name"]
-        if param["default"]:
-            p += f"={ param['default'] }"
-        res.append(p)
-    return "(" + ",".join(res) + ")"
 
 
 def analyze_signature(s: str) -> list[dict]:
@@ -530,12 +514,6 @@ def do_argparse(item):
                 if param["default"] != "None":
                     breakpoint()
                 default_check = f"{ pname } == NULL"
-        elif param["type"] == "bytes":
-            type = "PyObject *"
-            kind = "py_buffer"
-            if param["default"]:
-                breakpoint()
-                pass
         elif param["type"] == "list[str] | None":
             type = "PyObject *"
             kind = "optional_list_str"
@@ -578,7 +556,7 @@ def do_argparse(item):
                     breakpoint()
                 pass
         elif (
-            param["type"] in {"FTS5TokenizerFactory", "FTS5Function", "FTS5QueryPhrase"}
+            param["type"] in {"FTS5TokenizerFactory", "FTS5Function", "FTS5QueryPhrase", "SessionStreamInput", "SessionStreamOutput"}
             or callable_erasure(param["type"]) == "Callable"
         ):
             type = "PyObject *"
@@ -599,6 +577,24 @@ def do_argparse(item):
         elif param["type"] == "Connection":
             type = "Connection *"
             kind = "Connection"
+            if param["default"]:
+                breakpoint()
+                pass
+        elif param["type"] == "TableChange":
+            type = "APSWTableChange *"
+            kind = "TableChange"
+            if param["default"]:
+                breakpoint()
+                pass
+        elif param["type"] == "ChangesetInput":
+            type = "PyObject *"
+            kind = "ChangesetInput"
+            if param["default"]:
+                breakpoint()
+                pass
+        elif param["type"] == "Buffer":
+            type = "PyObject *"
+            kind = "Buffer"
             if param["default"]:
                 breakpoint()
                 pass
@@ -658,7 +654,8 @@ def do_argparse(item):
     code = "\n".join(line for line in code.split("\n") if line.strip())
 
     res.insert(0, f"""#define { item['symbol'] }_USAGE "{ get_usage(item) }"\n""")
-    n = ", ".join(f'"{ a }"' for a in kwlist)
+    n = ", ".join(f'"{ a }"' for a in kwlist) if kwlist else "NULL"
+
     res.insert(0, f"""#define { item['symbol'] }_KWNAMES { n }""")
 
     check_and_update(f"{ item['symbol'] }_CHECK", code)
@@ -726,8 +723,8 @@ def generate_typestubs(items: list[dict]) -> None:
 
         klass, name = item["name"].split(".", 1)
         signature = item["signature_original"]
-        if klass == "apsw":
-            name = item["name"][len("apsw.") :]
+        if klass in {"apsw"}:
+            name = item["name"][len(klass)+1 :]
             if item["kind"] == "method":
                 assert signature.startswith("(")
                 print(f"{ baseindent }def { name }{ signature }:", file=out)
@@ -750,6 +747,7 @@ def generate_typestubs(items: list[dict]) -> None:
                     print("@final", file=out)
                 print(f"{ baseindent }class { klass }{ extra }:", file=out)
                 print(fmt_docstring(doc, indent=f"{ baseindent }    "), file=out)
+                print(file=out)
 
             if item["kind"] == "method":
                 for find, replace in (
@@ -757,8 +755,11 @@ def generate_typestubs(items: list[dict]) -> None:
                     ("list[int,int]", "list[int]"),  # can't see how to type a 2 item list
                 ):
                     signature = signature.replace(find, replace)
-                if not signature.startswith("(self"):
-                    signature = "(self" + (", " if signature[1] != ")" else "") + signature[1:]
+                if klass in {"Changeset"}:
+                    print(f"{ baseindent}    @staticmethod", file=out)
+                else:
+                    if not signature.startswith("(self"):
+                        signature = "(self" + (", " if signature[1] != ")" else "") + signature[1:]
                 print(f"{ baseindent }    def { name }{ signature }:", file=out)
                 print(fmt_docstring(item["doc"], indent=f"{ baseindent }        "), file=out)
                 print(f"{ baseindent }        ...", file=out)
@@ -844,7 +845,7 @@ if __name__ == "__main__":
 
     out = io.StringIO()
     print(
-        """/* This file is generated by rst2docstring */
+        """/* This file is generated by gendocstrings.py */
 
 #ifndef __GNUC__
 #define __builtin_types_compatible_p(x,y) (1)
