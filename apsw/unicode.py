@@ -1662,30 +1662,81 @@ use the C library function wcswidth, or use the wcwidth Python package wcswidth 
             print("),")
 
     elif options.function == "widthcheck":
-        import atexit
 
-        import ctypes, ctypes.util
+        import wcwidth # pip install wcwidth
 
-        libc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("c"))
-        libc.wcswidth.argtypes = [ctypes.c_wchar_p, ctypes.c_size_t]
-        libc.wcswidth.restype = ctypes.c_int
+        if sys.platform != "win32":
+            import atexit
 
-        import wcwidth
+            import ctypes, ctypes.util
 
-        tty_in = open("/dev/tty", "r")
-        tty_out = open("/dev/tty", "w")
-        import tty
-        import termios
+            libc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("c"))
+            libc.wcswidth.argtypes = [ctypes.c_wchar_p, ctypes.c_size_t]
+            libc.wcswidth.restype = ctypes.c_int
 
-        term_mode = termios.tcgetattr(tty_in)
+            tty_in = open("/dev/tty", "r")
+            tty_out = open("/dev/tty", "w")
+            import tty
+            import termios
 
-        def finish():
-            termios.tcsetattr(tty_in, termios.TCSAFLUSH, term_mode)
-            print("", flush=True, file=tty_out)
+            term_mode = termios.tcgetattr(tty_in)
 
-        atexit.register(finish)
+            def finish():
+                termios.tcsetattr(tty_in, termios.TCSAFLUSH, term_mode)
+                print("", flush=True, file=tty_out)
 
-        tty.setraw(tty_in)
+            atexit.register(finish)
+
+            tty.setraw(tty_in)
+        else:
+
+            import ctypes, msvcrt
+
+            kernel32 = ctypes.windll.kernel32
+
+            # we need console handle (stdout is often redirected)
+            h_tty_out = kernel32.CreateFileW("CONOUT$", 0x80000000 | 0x40000000, 0x00000001|0x00000002, None, 3, 0, None)
+            assert h_tty_out != -1
+
+            # Convince it raw bytes are utf8
+            res = kernel32.SetConsoleCP(65001) # CP_UTF8
+            assert res # zero means failure
+            res = kernel32.SetConsoleOutputCP(65001) # CP_UTF8
+            assert res # zero means failure
+
+            # enable ansi processing
+            res = kernel32.SetConsoleMode(h_tty_out, 5)
+            assert res # zero means failure
+
+            # fake i/o interfaces using classes as namespace, not instances
+            class tty_out:
+                def write(data):
+                    data = data.encode("utf8")
+                    res = kernel32.WriteFile(h_tty_out, data, len(data), None, None)
+                    assert res # zero means failure
+
+                def flush():
+                    # we do no buffering so flush is a no-op
+                    pass
+
+            class tty_in:
+                def read(how_much):
+                    res = ""
+                    while len(res) < how_much:
+                        res += msvcrt.getwch()
+                    return res
+
+
+            # fake out wcwidth C API
+            class libc:
+                def wcswidth(s, n):
+                    # give same value as apsw.unicode
+                    return text_width(s)
+
+            def finish():
+                # utf8 etc above are process local so we don't need to
+                # reset the terminal
+                pass
 
         def get_pos():
             print("\x1b[6n", flush=True, file=tty_out, end="")

@@ -20,9 +20,6 @@ import time
 import concurrent.futures
 import random
 
-if os.path.isdir("/usr/lib/ccache"):
-    os.putenv("PATH", "/usr/lib/ccache:" + os.environ["PATH"])
-    print(f"{os.environ.get('CCACHE_DIR')=}")
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -245,11 +242,11 @@ def cmp(a, b):
 # Default versions we support
 PYVERS = (
     "3.14.0b2",
-    "3.13.3",
-    "3.12.10",
-    "3.11.12",
-    "3.10.17",
-    "3.9.22",
+    "3.13.4",
+    "3.12.11",
+    "3.11.13",
+    "3.10.18",
+    "3.9.23",
     "system",
 )
 
@@ -258,6 +255,9 @@ SQLITEVERS = ("3.50.0", )
 BITS = (64, 32)
 
 if __name__ == "__main__":
+    if os.path.isdir("/usr/lib/ccache"):
+        os.putenv("PATH", "/usr/lib/ccache:" + os.environ["PATH"])
+        print(f"{os.environ.get('CCACHE_DIR')=}")
     nprocs = 0
     try:
         # try and work out how many processors there are - this works on linux
