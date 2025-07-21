@@ -6,7 +6,7 @@ import array
 import types
 
 # Anything that resembles a dictionary
-Mapping: TypeAlias = collections.abc.Mapping
+from collections.abc import Mapping
 
 # Anything that resembles a sequence of bytes
 if sys.version_info >= (3, 12):
@@ -115,6 +115,9 @@ on the operatation.  Return SQLITE_OK, SQLITE_DENY, or SQLITE_IGNORE"""
 CommitHook = Callable[[], bool]
 """Commit hook is called with no arguments and should return True to abort the commit and False
 to let it continue"""
+
+PreupdateHook = Callable[[PreUpdate], None]
+"""The hook is called with information about the update, and has no return value"""
 
 TokenizerResult = Iterable[str | tuple[str, ...] | tuple[int, int, *tuple[str, ...]]]
 """The return from a tokenizer is based on the include_offsets and

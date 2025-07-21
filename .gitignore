@@ -47,6 +47,7 @@ work/
 .venv/
 compile_commands.json
 .vscode/
+.cache/
 
 # configure detritus
 sqlite3/configure/config.log
