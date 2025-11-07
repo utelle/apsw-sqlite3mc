@@ -117,7 +117,7 @@ from typing import Iterator, Iterable, Any
 import re
 
 ### BEGIN UNICODE UPDATE SECTION ###
-unicode_version = "16.0"
+unicode_version = "17.0"
 """The `Unicode version <https://www.unicode.org/versions/enumeratedversions.html>`__
 that the rules and data tables implement"""
 
@@ -456,7 +456,7 @@ def text_width_substr(text: str, width: int, offset: int = 0) -> tuple[int, str]
 
 def guess_paragraphs(text: str, tabsize: int = 8) -> str:
     """Given text that contains paragraphs containing newlines, guesses where the paragraphs end.
-    The returned :class:`str` will have ``\n`` removed where it was
+    The returned :class:`str` will have ``\\n`` (newline) removed where it was
     determined to not mark a paragraph end.
 
     .. code-block:: output
@@ -479,7 +479,7 @@ def guess_paragraphs(text: str, tabsize: int = 8) -> str:
            this line is part of the line above
 
         3. Optional numbers followed by punctuation then space
-        - are considered new paragraphs
+           - are considered new paragraphs
 
     """
     # regex to match what looks like an (optionally numbered) list
@@ -687,6 +687,7 @@ def version_added(codepoint: int | str) -> str | None:
 
 version_dates = {
     # Extracted from https://www.unicode.org/history/publicationdates.html
+    "17.0": (2025, 9, 9),
     "16.0": (2024, 9, 10),
     "15.1": (2023, 9, 12),
     "15.0": (2022, 9, 13),
@@ -1401,6 +1402,9 @@ use the C library function wcswidth, or use the wcwidth Python package wcswidth 
             print(f"{ len(fails)//4 } tests failed, {passed:,} passed:", file=sys.stderr)
             for fail in fails:
                 print(fail, file=sys.stderr)
+            if len(fails)//4 > 5:
+                # also print at bottom since the top will have scrolled off the screen
+                print(f"{ len(fails)//4 } tests failed, {passed:,} passed:", file=sys.stderr)
             sys.exit(2)
         else:
             print(f"{passed:,} passed")
@@ -1413,8 +1417,12 @@ use the C library function wcswidth, or use the wcwidth Python package wcswidth 
             except ValueError:
                 codepoints.extend(ord(c) for c in t)
 
-        def uniname(cp):
-            return str(codepoint_name(cp))
+        def uniname(cp, none="(no name)"):
+            x = codepoint_name(cp)
+            if x is None:
+                return none
+            assert isinstance(x, str)
+            return x
 
         def deets(cp):
             cat = category(cp)
@@ -1435,7 +1443,7 @@ use the C library function wcswidth, or use the wcwidth Python package wcswidth 
                 if not mangle:
                     mangled.append("(nothing)")
                 else:
-                    mangled.append(", ".join(f"U+{ ord(v):04X} {uniname(ord(v))}" for v in mangle))
+                    mangled.append(", ".join(f"U+{ ord(v):04X} {uniname(ord(v), none='')}" for v in mangle))
             print(f"casefold: { mangled[0] }   stripped: { mangled[1] }")
             print(
                 f"Width: { text_width(chr(cp)) }  "

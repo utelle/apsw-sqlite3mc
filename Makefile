@@ -1,8 +1,8 @@
 
-SQLITEVERSION=3.50.4
+SQLITEVERSION=3.51.0
 APSWSUFFIX=.0
 
-RELEASEDATE="31 July 2025"
+RELEASEDATE="6 November 2025"
 
 VERSION=$(SQLITEVERSION)$(APSWSUFFIX)
 VERDIR=apsw-$(VERSION)
@@ -18,12 +18,14 @@ GENDOCS = \
 	doc/cursor.rst \
 	doc/apsw.rst \
 	doc/session.rst \
+	doc/jsonb.rst \
 	doc/backup.rst \
 	doc/fts.rst
 
 GENEXAMPLES = \
     doc/example-fts.rst \
-	doc/example-session.rst
+	doc/example-session.rst \
+	doc/example-json.rst
 
 .PHONY : help all tagpush clean doc docs build_ext build_ext_debug coverage pycoverage test test_debug fulltest linkcheck unwrapped \
 		 publish stubtest showsymbols compile-win setup-wheel source_nocheck source release pydebug \
@@ -60,7 +62,7 @@ docs-no-fetch: $(GENDOCS) doc/example.rst $(GENEXAMPLES) doc/typing.rstgen doc/r
 	rm -f testdb
 	env PYTHONPATH=. $(PYTHON) tools/docmissing.py
 	env PYTHONPATH=. $(PYTHON) tools/docupdate.py $(VERSION) $(RELEASEDATE)
-	rm apsw/__init__.pyi
+	-rm apsw/__init__.pyi
 	$(MAKE) PYTHONPATH="`pwd`" VERSION=$(VERSION) RELEASEDATE=$(RELEASEDATE) -C doc clean html ; rc=$$? ; $(MAKE) apsw/__init__.pyi ; exit $$rc
 	tools/spellcheck.sh
 	rst2html5 --strict --verbose --exit-status 1 README.rst >/dev/null
@@ -175,6 +177,7 @@ fossil: ## Grabs latest trunk from SQLite source control, extracts and builds in
 	mkdir sqlite3
 	set -e ; cd sqlite3 ; curl --output - $(FOSSIL_URL) | tar xfz - --strip-components=1
 	set -e ; cd sqlite3 ; ./configure --quiet --all --disable-tcl ; $(MAKE) sqlite3.c sqlite3
+	$(PYTHON) setup.py patch
 
 # the funky test stuff is to exit successfully when grep has rc==1 since that means no lines found.
 showsymbols:  ## Finds any C symbols that aren't static(private)
@@ -262,7 +265,7 @@ src/_unicodedb.c: tools/ucdprops2code.py ## Update generated Unicode database lo
 	$(PYTHON) tools/ucdprops2code.py $@
 
 # building a python debug interpreter
-PYDEBUG_VER=3.14.0rc1
+PYDEBUG_VER=3.14.0
 PYDEBUG_DIR=/space/pydebug
 PYTHREAD_VER=$(PYDEBUG_VER)
 PYTHREAD_DIR=/space/pythread

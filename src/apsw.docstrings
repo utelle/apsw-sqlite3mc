@@ -35,6 +35,49 @@
 #define Apsw_apsw_version_USAGE "apsw.apsw_version() -> str"
 #define Apsw_apsw_version_OLDDOC Apsw_apsw_version_USAGE "\n(Old less clear name apswversion)"
 
+#define  Apsw_carray_DOC "apsw.carray(object: Buffer | tuple[str, ...] | tuple[Buffer, ...], *, start: int = 0, stop: int = -1, flags: int = -1) -> CArrayBinding\n\n" \
+"Indicates a Python object is being provided as a runtime array for the\n" \
+"`Carray extension <https://sqlite.org/carray.html>`__.  This is to provide\n" \
+"bulk numbers (int or float), strings, or blobs to a query,  The array will\n" \
+"be used without calling back into Python code or acquiring the GIL.  It takes\n" \
+"about 5% of the CPU time using Carray versus passing each value in one at a\n" \
+"time via Python.\n" \
+"\n" \
+"See the :ref:`example <example_carray>`.\n" \
+"\n" \
+":param object: For numbers, any object that implements the buffer protocol as\n" \
+"   a single contiguous binary data like :class:`bytes`, :class:`bytearray`,\n" \
+"   :class:`array.array`, numpy.array etc.\n" \
+"\n" \
+"   Otherwise it should be a tuple of strings, or a tuple of binary data\n" \
+"   objects.  All elements must be the same type.\n" \
+":param start: Index of the first entry to bind\n" \
+":param stop: Index to stop at - ie one beyond the last entry bound.  Default\n" \
+"    is all remaining members.\n" \
+":param flags: Default auto detect.\n" \
+"\n" \
+"    For numbers, detection is done from the buffer\n" \
+"    `format code <https://docs.python.org/3/library/struct.html#byte-order-size-and-alignment>`__\n" \
+"    and itemsize.  You can use ``format`` and ``itemsize`` attributes of :code:`memoryview(object)`\n" \
+"    to see what they are.\n" \
+"\n" \
+"    Format ``i``, ``l``, ``q``\n" \
+"        ``SQLITE_CARRAY_INT32`` or ``SQLITE_CARRAY_INT64`` based on itemsize\n" \
+"    Format  ``d``\n" \
+"        ``SQLITE_CARRAY_DOUBLE``\n" \
+"\n" \
+"    You can explicitly provide the type such as :code:`apsw.SQLITE_CARRAY_INT32`.  If\n" \
+"    it is incorrect then the values will be nonsense.\n" \
+"\n" \
+"    If using a tuple of string or blobs, you can specify :code:`apsw.SQLITE_CARRAY_TEXT`\n" \
+"    and :code:`apsw.SQLITE_CARRAY_BLOB` respectively, but they would be detected anyway.\n" \
+"    A wrong value will fail.\n" \
+"\n" \
+".. note::\n" \
+"\n" \
+"  Carray support is only present if APSW was compiled with ``SQLITE_ENABLE_CARRAY`` such as\n" \
+"  PyPi builds.  The array must have at least one member and at most 2 billion.\n" 
+
 #define  Apsw_complete_DOC "apsw.complete(statement: str) -> bool\n\n" \
 "Returns True if the input string comprises one or more complete SQL\n" \
 "statements by looking for an unquoted trailing semi-colon.  It does\n" \
@@ -185,6 +228,158 @@
 "\n" \
 "Calls: `sqlite3_initialize <https://sqlite.org/c3ref/initialize.html>`__\n" 
 
+#define  Apsw_jsonb_decode_DOC "apsw.jsonb_decode(data: Buffer, *,  object_pairs_hook: Callable[[list[tuple[str, JSONBTypes | Any]]], Any] | None = None,  object_hook: Callable[[dict[str, JSONBTypes | Any]], Any] | None = None,    array_hook: Callable[[list[JSONBTypes | Any]], Any] | None = None,    parse_int: Callable[[str], Any] | None = None,    parse_float: Callable[[str], Any] | None = None,) -> Any\n\n" \
+"Decodes JSONB binary data into a Python object.  It is like :func:`json.loads`\n" \
+"but operating on JSONB binary source instead of a JSON text source.\n" \
+"\n" \
+":param data: Binary data to decode\n" \
+":param object_pairs_hook: Called after a JSON object has been\n" \
+"    decoded with a list of tuples, each consisting of a\n" \
+"    :class:`str` and corresponding value, and should return a\n" \
+"    replacement value to use instead.\n" \
+":param object_hook: Called after a JSON object has been decoded\n" \
+"    into a Python :class:`dict` and should return a replacement\n" \
+"    value to use instead.\n" \
+":param array_hook: Called after a JSON array has been decoded into\n" \
+"    a list, and should return a replacement value to use instead.\n" \
+":param parse_int: Called with a :class:`str` of the integer, and\n" \
+"    should return a value to use.  The default is :class:`int`.\n" \
+"    If the integer is hexadecimal then it will be called with a\n" \
+"    second parameter of 16.\n" \
+":param parse_float: Called with a :class:`str` of the float, and\n" \
+"    should return a value to use.  The default is :class:`float`.\n" \
+"\n" \
+"Only one of ``object_hook`` or ``object_pairs_hook`` can be\n" \
+"provided.  ``object_pairs_hook`` is useful when you want something\n" \
+"other than a dict, care about the order of keys, want to convert\n" \
+"them first (eg case, numbers, normalization), want to handle duplicate\n" \
+"keys etc.\n" \
+"\n" \
+"The array, int, and float hooks let you use alternate implementations.\n" \
+"For example if you are using `numpy\n" \
+"<https://numpy.org/doc/stable/user/basics.types.html>`__ then you\n" \
+"could use numpy arrays instead of lists, or numpy's float128 to get\n" \
+"higher precision floating numbers with greater exponent range than the\n" \
+"builtin float type.\n" \
+"\n" \
+"If you use :class:`types.MappingProxyType` as ``object_hook`` and\n" \
+":class:`tuple` as ``array_hook`` then the overall returned value\n" \
+"will be immutable (read only).\n" \
+"\n" \
+".. note::\n" \
+"\n" \
+"  The data is always validated during decode.  There is no need to\n" \
+"  separately call :func:`~apsw.jsonb_detect`.\n" 
+
+#define Apsw_jsonb_decode_KWNAMES "data", "object_pairs_hook", "object_hook", "array_hook", "parse_int", "parse_float"
+#define Apsw_jsonb_decode_USAGE "apsw.jsonb_decode(data: Buffer, *,  object_pairs_hook: Callable[[list[tuple[str, JSONBTypes | Any]]], Any] | None = None,  object_hook: Callable[[dict[str, JSONBTypes | Any]], Any] | None = None,    array_hook: Callable[[list[JSONBTypes | Any]], Any] | None = None,    parse_int: Callable[[str], Any] | None = None,    parse_float: Callable[[str], Any] | None = None,) -> Any"
+
+#define Apsw_jsonb_decode_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(data), PyObject *)); \
+  assert(__builtin_types_compatible_p(typeof(object_pairs_hook), PyObject *)); \
+  assert(object_pairs_hook == NULL); \
+  assert(__builtin_types_compatible_p(typeof(object_hook), PyObject *)); \
+  assert(object_hook == NULL); \
+  assert(__builtin_types_compatible_p(typeof(array_hook), PyObject *)); \
+  assert(array_hook == NULL); \
+  assert(__builtin_types_compatible_p(typeof(parse_int), PyObject *)); \
+  assert(parse_int == NULL); \
+  assert(__builtin_types_compatible_p(typeof(parse_float), PyObject *)); \
+  assert(parse_float == NULL); \
+} while(0)
+
+
+#define  Apsw_jsonb_detect_DOC "apsw.jsonb_detect(data: Buffer) -> bool\n\n" \
+"Returns ``True`` if data is valid JSONB, otherwise ``False``.  If this returns\n" \
+"``True`` then SQLite will produce valid JSON from it.\n" \
+"\n" \
+"SQLite's json_valid only checks the various internal type and length fields are consistent\n" \
+"and items seem reasonable.  It does not check all corner cases, or the UTF8\n" \
+"encoding, and so can produce invalid JSON even if json_valid said it was valid JSONB.\n" \
+"\n" \
+".. note::\n" \
+"\n" \
+"  :func:`~apsw.jsonb_decode` always validates the data as it decodes, so there is no\n" \
+"  need to call this function separately.  This function is useful for determining if\n" \
+"  some data is valid, and not some other binary format such as an image.\n" 
+
+#define Apsw_jsonb_detect_KWNAMES "data"
+#define Apsw_jsonb_detect_USAGE "apsw.jsonb_detect(data: Buffer) -> bool"
+
+#define Apsw_jsonb_detect_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(data), PyObject *)); \
+} while(0)
+
+
+#define  Apsw_jsonb_encode_DOC "apsw.jsonb_encode(obj: Any, *, skipkeys: bool = False, sort_keys: bool = False, check_circular: bool = True, exact_types: bool = False, default: Callable[[Any], JSONBTypes | Buffer] | None = None, default_key: Callable[[Any], str] | None = None, allow_nan:bool = True) -> bytes\n\n" \
+"Encodes a Python object as JSONB.  It is like :func:`json.dumps` except it produces\n" \
+"JSONB bytes instead of JSON text.\n" \
+"\n" \
+":param obj: Object to encode\n" \
+":param skipkeys: If ``True`` and a non-string dict key is\n" \
+"   encountered then it is skipped.  Otherwise :exc:`ValueError`\n" \
+"   is raised.  Default ``False``.  Like :func:`json.dumps` keys\n" \
+"   that are bool, int, float, and None are always converted to\n" \
+"   string.\n" \
+":param sort_keys: If ``True`` then objects (dict) will be output\n" \
+"   with the keys sorted.  This produces deterministic output.\n" \
+"   Default ``False``.\n" \
+":param check_circular: Detects if containers contain themselves\n" \
+"   (even indirectly) and raises :exc:`ValueError`.  If ``False``\n" \
+"   and there is a circular reference, you eventually get\n" \
+"   :exc:`RecursionError` (or run out of memory or similar).\n" \
+":param default: Called if an object can't be encoded, and should\n" \
+"   return an object that can be encoded.  If not provided a\n" \
+"   :exc:`TypeError` is raised.\n" \
+"\n" \
+"   It can also return binary data in JSONB format.  For example\n" \
+"   :mod:`decimal` values can be encoded as a full precision JSONB\n" \
+"   float.  :func:`apsw.ext.make_jsonb` can be used.\n" \
+":param default_key: Objects (dict) must have string keys.  If a\n" \
+"   non-string key is encountered, it is skipped if ``skipkeys``\n" \
+"   is ``True``.  Otherwise this is called.  If not supplied the\n" \
+"   default matches the standard library :mod:`json` which\n" \
+"   converts None, bool, int and float to their string JSON\n" \
+"   equivalents and uses those.  This callback is useful if\n" \
+"   you want to raise an exception, or use a different way\n" \
+"   of generating the key string.\n" \
+":param allow_nan: If ``True`` (default) then following SQLite practise,\n" \
+"    infinity is converted to float ``9e999`` and NaN is converted\n" \
+"    to ``None``.  If ``False`` a :exc:`ValueError` is raised.\n" \
+":param exact_types: By default subclasses of int, float, list (including\n" \
+"    tuple), dict (including :class:`collections.abc.Mapping`), and\n" \
+"    :class:`str` are converted the same as the parent class.  This\n" \
+"    is usually what you want.  However sometimes you are using a\n" \
+"    subclass and want them converted by the ``default`` function\n" \
+"    with an example being :class:`enum.IntEnum`.  If this parameter\n" \
+"    is ``True`` then only the exact types are directly converted\n" \
+"    and subclasses will be passed to ``default`` or ``default_key``.\n" \
+"\n" \
+"You will get a :exc:`~apsw.TooBigError` if the resulting JSONB\n" \
+"will exceed 2GB because SQLite can't handle it.\n" 
+
+#define Apsw_jsonb_encode_KWNAMES "obj", "skipkeys", "sort_keys", "check_circular", "exact_types", "default", "default_key", "allow_nan"
+#define Apsw_jsonb_encode_USAGE "apsw.jsonb_encode(obj: Any, *, skipkeys: bool = False, sort_keys: bool = False, check_circular: bool = True, exact_types: bool = False, default: Callable[[Any], JSONBTypes | Buffer] | None = None, default_key: Callable[[Any], str] | None = None, allow_nan:bool = True) -> bytes"
+
+#define Apsw_jsonb_encode_CHECK do { \
+  assert(__builtin_types_compatible_p(typeof(obj), PyObject *)); \
+  assert(__builtin_types_compatible_p(typeof(skipkeys), int)); \
+  assert(skipkeys == 0); \
+  assert(__builtin_types_compatible_p(typeof(sort_keys), int)); \
+  assert(sort_keys == 0); \
+  assert(__builtin_types_compatible_p(typeof(check_circular), int)); \
+  assert(check_circular == 1); \
+  assert(__builtin_types_compatible_p(typeof(exact_types), int)); \
+  assert(exact_types == 0); \
+  assert(__builtin_types_compatible_p(typeof(default_), PyObject *)); \
+  assert(default_ == NULL); \
+  assert(__builtin_types_compatible_p(typeof(default_key), PyObject *)); \
+  assert(default_key == NULL); \
+  assert(__builtin_types_compatible_p(typeof(allow_nan), int)); \
+  assert(allow_nan == 1); \
+} while(0)
+
+
 #define  Apsw_log_DOC "apsw.log(errorcode: int, message: str) -> None\n\n" \
 "Calls the SQLite logging interface.  You must format the\n" \
 "message before passing it to this method::\n" \
@@ -244,7 +439,7 @@
 ":meth:`VTTable.UpdateChangeRow`, :attr:`TableChange.new`,\n" \
 "and :class:`PreUpdate.update`.\n" 
 
-#define  Apsw_pyobject_DOC "apsw.pyobject(object: Any)\n\n" \
+#define  Apsw_pyobject_DOC "apsw.pyobject(object: Any) -> PyObjectBinding\n\n" \
 "Indicates a Python object is being provided as a\n" \
 ":ref:`runtime value <pyobject>`.\n" 
 
@@ -863,14 +1058,15 @@
 } while(0)
 
 
-#define  Changeset_apply_DOC "Changeset.apply(changeset: ChangesetInput, db: Connection, *, filter: Optional[Callable[[str], bool]] = None, conflict: Optional[Callable[[int,TableChange], int]] = None, flags: int = 0, rebase: bool = False) -> bytes | None\n\n" \
+#define  Changeset_apply_DOC "Changeset.apply(changeset: ChangesetInput, db: Connection, *, filter: Optional[Callable[[str], bool]] = None, filter_change: Optional[Callable[[TableChange], bool]] = None, conflict: Optional[Callable[[int,TableChange], int]] = None, flags: int = 0, rebase: bool = False) -> bytes | None\n\n" \
 "Applies a changeset to a database.\n" \
 "\n" \
 ":param source: The changeset either as the bytes, or a stream\n" \
 ":param db: The connection to make the change on\n" \
 ":param filter: Callback to determine if changes to a table are done\n" \
+":param filter_change: Callback to determine if a particular change is made\n" \
 ":param conflict: Callback to handle a change that cannot be applied\n" \
-":param flags: `v2 API flags <https://www.sqlite.org/session/c_changesetapply_fknoaction.html>`__.\n" \
+":param flags: `API flags <https://www.sqlite.org/session/c_changesetapply_fknoaction.html>`__.\n" \
 ":param rebase: If ``True`` then return :class:`rebase <Rebaser>` information, else :class:`None`.\n" \
 "\n" \
 "Filter\n" \
@@ -879,6 +1075,15 @@
 "Callback called with a table name, once per table that has a change.  It should return ``True``\n" \
 "if changes to that table should be applied, or ``False`` to ignore them.  If not supplied then\n" \
 "all tables have changes applied.\n" \
+"\n" \
+"Filter Change\n" \
+"-------------\n" \
+"\n" \
+"Callback called with each :class:`TableChange`.  It should return\n" \
+"``True`` if the change should be applied, or ``False`` to ignore it.\n" \
+"If not supplied then all changes are applied.\n" \
+"\n" \
+"**Note** You can only supply either ``filter`` or ``filter_change`` but not both.\n" \
 "\n" \
 "Conflict\n" \
 "--------\n" \
@@ -898,16 +1103,20 @@
 "\n" \
 "Calls:\n" \
 "  * `sqlite3changeset_apply_v2 <https://sqlite.org/session/sqlite3changeset_apply.html>`__\n" \
-"  * `sqlite3changeset_apply_v2_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__\n" 
+"  * `sqlite3changeset_apply_v2_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__\n" \
+"  * `sqlite3changeset_apply_v3 <https://sqlite.org/session/sqlite3changeset_apply.html>`__\n" \
+"  * `sqlite3changeset_apply_v3_strm <https://sqlite.org/session/sqlite3changegroup_add_strm.html>`__\n" 
 
-#define Changeset_apply_KWNAMES "changeset", "db", "filter", "conflict", "flags", "rebase"
-#define Changeset_apply_USAGE "Changeset.apply(changeset: ChangesetInput, db: Connection, *, filter: Optional[Callable[[str], bool]] = None, conflict: Optional[Callable[[int,TableChange], int]] = None, flags: int = 0, rebase: bool = False) -> bytes | None"
+#define Changeset_apply_KWNAMES "changeset", "db", "filter", "filter_change", "conflict", "flags", "rebase"
+#define Changeset_apply_USAGE "Changeset.apply(changeset: ChangesetInput, db: Connection, *, filter: Optional[Callable[[str], bool]] = None, filter_change: Optional[Callable[[TableChange], bool]] = None, conflict: Optional[Callable[[int,TableChange], int]] = None, flags: int = 0, rebase: bool = False) -> bytes | None"
 
 #define Changeset_apply_CHECK do { \
   assert(__builtin_types_compatible_p(typeof(changeset), PyObject *)); \
   assert(__builtin_types_compatible_p(typeof(db), Connection *)); \
   assert(__builtin_types_compatible_p(typeof(filter), PyObject *)); \
   assert(filter == NULL); \
+  assert(__builtin_types_compatible_p(typeof(filter_change), PyObject *)); \
+  assert(filter_change == NULL); \
   assert(__builtin_types_compatible_p(typeof(conflict), PyObject *)); \
   assert(conflict == NULL); \
   assert(__builtin_types_compatible_p(typeof(flags), int)); \
@@ -1322,6 +1531,18 @@
 "\n" \
 "Calls: `sqlite3_db_config <https://sqlite.org/c3ref/db_config.html>`__\n" 
 
+#define  Connection_convert_binding_DOC ":type: ConvertBinding | None\n" \
+"\n" \
+"Called on a cursor when a binding is not a supported type.\n" \
+"This connection value is used when the cursor does not set\n" \
+"its own value.  See :attr:`Cursor.convert_binding`\n" 
+
+#define  Connection_convert_jsonb_DOC ":type: ConvertJSONB | None\n" \
+"\n" \
+"Called on a cursor when a blob being returned is valid JSONB.\n" \
+"This connection value is used when the cursor does not set\n" \
+"its own value.  See :attr:`Cursor.convert_jsonb`\n" 
+
 #define  Connection_create_aggregate_function_DOC "Connection.create_aggregate_function(name: str, factory: Optional[AggregateFactory], numargs: int = -1, *, flags: int = 0) -> None\n\n" \
 "Registers an aggregate function.  Aggregate functions operate on all\n" \
 "the relevant rows such as counting how many there are.\n" \
@@ -1697,8 +1918,10 @@
 "              call_function2(db)\n" \
 "              db.execute(\"...\")\n" \
 "\n" \
-"Behind the scenes `savepoints <https://sqlite.org/lang_savepoint.html>`__\n" \
-" are used to provide nested transactions.\n" 
+"If starting an `outermost transaction\n" \
+"<https://sqlite.org/lang_transaction.html>`__ then ``BEGIN`` uses\n" \
+":attr:`transaction_mode` (default ``DEFERRED``).  Nested statements\n" \
+"use `savepoints <https://sqlite.org/lang_savepoint.html>`__.\n" 
 
 #define  Connection_exec_trace_DOC ":type: Optional[ExecTracer]\n" \
 "\n" \
@@ -2570,7 +2793,7 @@
 "  * :func:`apsw.status` which does the same for SQLite as a whole\n" \
 "  * :ref:`Example <example_status>`\n" \
 "\n" \
-"Calls: `sqlite3_db_status <https://sqlite.org/c3ref/db_status.html>`__\n" 
+"Calls: `sqlite3_db_status64 <https://sqlite.org/c3ref/db_status.html>`__\n" 
 
 #define Connection_status_KWNAMES "op", "reset"
 #define Connection_status_USAGE "Connection.status(op: int, reset: bool = False) -> tuple[int, int]"
@@ -2703,6 +2926,15 @@
   assert(id == NULL); \
 } while(0)
 
+
+#define  Connection_transaction_mode_DOC ":type: str\n" \
+"\n" \
+"The mode used for the outermost transaction when using the\n" \
+":meth:`context manager (with) <__enter__>`.\n" \
+"\n" \
+"The value will be one of ``DEFERRED`` (default), ``IMMEDIATE``,\n" \
+"or ``EXCLUSIVE``.  When setting it must be one of those values\n" \
+"in any case.\n" 
 
 #define  Connection_txn_state_DOC "Connection.txn_state(schema: Optional[str] = None) -> int\n\n" \
 "Returns the current transaction state of the database, or a specific schema\n" \
@@ -2854,6 +3086,35 @@
 "\n" \
 ":class:`Connection` this cursor is using\n" 
 
+#define  Cursor_convert_binding_DOC ":type: ConvertBinding | None\n" \
+"\n" \
+"Called with the :class:`Cursor`, parameter number, and value when\n" \
+"an unsuppported type is used in a binding. Note that parameter\n" \
+"numbers start at 1.\n" \
+"\n" \
+"If set to ``None`` then conversion is disabled for this cursor.\n" \
+"\n" \
+".. seealso::\n" \
+"\n" \
+"  * :attr:`bindings_count`\n" \
+"  * :attr:`bindings_names`\n" 
+
+#define  Cursor_convert_jsonb_DOC ":type: ConvertJSONB | None\n" \
+"\n" \
+"Called with the :class:`Cursor`, column number, and bytes value\n" \
+"when a blob value is valid JSONB.  The callback can :func:`decode the\n" \
+"<jsonb_decode>` or return the bytes as is.\n" \
+"\n" \
+"If set to ``None`` then conversion is disabled for this cursor.\n" \
+"\n" \
+".. seealso::\n" \
+"\n" \
+"  You can consult the description to get further confirmation if\n" \
+"  the value is intended to be JSONB.\n" \
+"\n" \
+"  * :attr:`Cursor.description_full`\n" \
+"  * :attr:`Cursor.description`\n" 
+
 #define  Cursor_description_DOC ":type: tuple[tuple[str, str, None, None, None, None, None], ...]\n" \
 "\n" \
 "Based on the `DB-API cursor property\n" \
@@ -2877,14 +3138,13 @@
 "  * `sqlite3_column_table_name <https://sqlite.org/c3ref/column_database_name.html>`__\n" \
 "  * `sqlite3_column_origin_name <https://sqlite.org/c3ref/column_database_name.html>`__\n" 
 
-#define  Cursor_exec_trace_DOC ":type: Optional[ExecTracer]\n" \
+#define  Cursor_exec_trace_DOC ":type: ExecTracer | None\n" \
 "\n" \
 "Called with the cursor, statement and bindings for\n" \
 "each :meth:`~Cursor.execute` or :meth:`~Cursor.executemany` on this\n" \
 "cursor.\n" \
 "\n" \
-"If *callable* is *None* then any existing execution tracer is\n" \
-"unregistered.\n" \
+"If *callable* is *None* then execution tracing is disabled for the cursor..\n" \
 "\n" \
 ".. seealso::\n" \
 "\n" \
@@ -3052,7 +3312,7 @@
 #define Cursor_get_description_USAGE "Cursor.get_description() -> tuple[tuple[str, str], ...]"
 #define Cursor_get_description_OLDDOC Cursor_get_description_USAGE "\n(Old less clear name getdescription)"
 
-#define  Cursor_get_exec_trace_DOC "Cursor.get_exec_trace() -> Optional[ExecTracer]\n\n" \
+#define  Cursor_get_exec_trace_DOC "Cursor.get_exec_trace() -> ExecTracer | None\n\n" \
 "Returns the currently installed :attr:`execution tracer\n" \
 "<Cursor.exec_trace>`\n" \
 "\n" \
@@ -3061,10 +3321,10 @@
 "  * :ref:`tracing`\n" 
 
 #define Cursor_get_exec_trace_OLDNAME "getexectrace"
-#define Cursor_get_exec_trace_USAGE "Cursor.get_exec_trace() -> Optional[ExecTracer]"
+#define Cursor_get_exec_trace_USAGE "Cursor.get_exec_trace() -> ExecTracer | None"
 #define Cursor_get_exec_trace_OLDDOC Cursor_get_exec_trace_USAGE "\n(Old less clear name getexectrace)"
 
-#define  Cursor_get_row_trace_DOC "Cursor.get_row_trace() -> Optional[RowTracer]\n\n" \
+#define  Cursor_get_row_trace_DOC "Cursor.get_row_trace() -> RowTracer | None\n\n" \
 "Returns the currently installed (via :meth:`~Cursor.set_row_trace`)\n" \
 "row tracer.\n" \
 "\n" \
@@ -3073,7 +3333,7 @@
 "  * :ref:`tracing`\n" 
 
 #define Cursor_get_row_trace_OLDNAME "getrowtrace"
-#define Cursor_get_row_trace_USAGE "Cursor.get_row_trace() -> Optional[RowTracer]"
+#define Cursor_get_row_trace_USAGE "Cursor.get_row_trace() -> RowTracer | None"
 #define Cursor_get_row_trace_OLDDOC Cursor_get_row_trace_USAGE "\n(Old less clear name getrowtrace)"
 
 #define  Cursor_has_vdbe_DOC ":type: bool\n" \
@@ -3113,14 +3373,13 @@
 #define  Cursor_next_DOC "Cursor.__next__(self: Cursor) -> Any\n\n" \
 "Cursors are iterators\n" 
 
-#define  Cursor_row_trace_DOC ":type: Optional[RowTracer]\n" \
+#define  Cursor_row_trace_DOC ":type: RowTracer | None\n" \
 "\n" \
 "Called with cursor and row being returned.  You can\n" \
 "change the data that is returned or cause the row to be skipped\n" \
 "altogether.\n" \
 "\n" \
-"If *callable* is *None* then any existing row tracer is\n" \
-"unregistered.\n" \
+"If ``None`` then row tracing is disabled for this cursor.\n" \
 "\n" \
 ".. seealso::\n" \
 "\n" \
@@ -3132,11 +3391,11 @@
 #define Cursor_row_trace_USAGE "Cursor.row_trace"
 #define Cursor_row_trace_OLDDOC Cursor_row_trace_USAGE "\n(Old less clear name rowtrace)"
 
-#define  Cursor_set_exec_trace_DOC "Cursor.set_exec_trace(callable: Optional[ExecTracer]) -> None\n\n" \
+#define  Cursor_set_exec_trace_DOC "Cursor.set_exec_trace(callable: ExecTracer | None) -> None\n\n" \
 "Sets the :attr:`execution tracer <Cursor.exec_trace>`\n" 
 
 #define Cursor_set_exec_trace_KWNAMES "callable"
-#define Cursor_set_exec_trace_USAGE "Cursor.set_exec_trace(callable: Optional[ExecTracer]) -> None"
+#define Cursor_set_exec_trace_USAGE "Cursor.set_exec_trace(callable: ExecTracer | None) -> None"
 
 #define Cursor_set_exec_trace_CHECK do { \
   assert(__builtin_types_compatible_p(typeof(callable), PyObject *)); \
@@ -3146,11 +3405,12 @@
 #define Cursor_set_exec_trace_OLDNAME "setexectrace"
 #define Cursor_set_exec_trace_OLDDOC Cursor_set_exec_trace_USAGE "\n(Old less clear name setexectrace)"
 
-#define  Cursor_set_row_trace_DOC "Cursor.set_row_trace(callable: Optional[RowTracer]) -> None\n\n" \
-"Sets the :attr:`row tracer <Cursor.row_trace>`\n" 
+#define  Cursor_set_row_trace_DOC "Cursor.set_row_trace(callable: RowTracer | None) -> None\n\n" \
+"Sets the :attr:`row tracer <Cursor.row_trace>`.  If ``None``\n" \
+"then row tracing is disabled for this cursor.\n" 
 
 #define Cursor_set_row_trace_KWNAMES "callable"
-#define Cursor_set_row_trace_USAGE "Cursor.set_row_trace(callable: Optional[RowTracer]) -> None"
+#define Cursor_set_row_trace_USAGE "Cursor.set_row_trace(callable: RowTracer | None) -> None"
 
 #define Cursor_set_row_trace_CHECK do { \
   assert(__builtin_types_compatible_p(typeof(callable), PyObject *)); \
@@ -3159,6 +3419,12 @@
 
 #define Cursor_set_row_trace_OLDNAME "setrowtrace"
 #define Cursor_set_row_trace_OLDDOC Cursor_set_row_trace_USAGE "\n(Old less clear name setrowtrace)"
+
+#define  Cursor_sql_DOC ":type: str\n" \
+"\n" \
+"The SQL being executed\n" \
+"\n" \
+"Calls: `sqlite3_sql <https://sqlite.org/c3ref/expanded_sql.html>`__\n" 
 
 #define  FTS5ExtensionApi_aux_data_DOC ":type: Any\n" \
 "\n" \
@@ -3982,11 +4248,11 @@
 #define  TableChange_class_DOC "Represents a `changed row\n" \
 "<https://sqlite.org/session/changeset_iter.html>`__.  They come from\n" \
 ":meth:`changeset iteration <Changeset.iter>` and from the\n" \
-":meth:`conflict handler in apply <Changeset.apply>`.\n" \
+":meth:`filter_change and conflict handler in apply <Changeset.apply>`.\n" \
 "\n" \
-"A TableChange is only valid when your conflict handler is active, or\n" \
+"A TableChange is only valid when your filter or conflict handler is active, or\n" \
 "has just been provided by a changeset iterator.  It goes out of scope\n" \
-"after your conflict handler returns, or the iterator moves to the next\n" \
+"after your filter or conflict handler returns, or the iterator moves to the next\n" \
 "entry.  You will get :exc:`~apsw.InvalidContextError` if you try to\n" \
 "access fields when out of scope.  This means you can't save\n" \
 "TableChanges for later, and need to copy out any information you need.\n" 
@@ -4081,7 +4347,7 @@
 "\n" \
 "Calls: `sqlite3_uri_boolean <https://sqlite.org/c3ref/uri_boolean.html>`__\n" 
 
-#define URIFilename_uri_boolean_KWNAMES "name", "default_"
+#define URIFilename_uri_boolean_KWNAMES "name", "default"
 #define URIFilename_uri_boolean_USAGE "URIFilename.uri_boolean(name: str, default: bool) -> bool"
 
 #define URIFilename_uri_boolean_CHECK do { \
@@ -4096,7 +4362,7 @@
 "\n" \
 "Calls: `sqlite3_uri_int64 <https://sqlite.org/c3ref/uri_boolean.html>`__\n" 
 
-#define URIFilename_uri_int_KWNAMES "name", "default_"
+#define URIFilename_uri_int_KWNAMES "name", "default"
 #define URIFilename_uri_int_USAGE "URIFilename.uri_int(name: str, default: int) -> int"
 
 #define URIFilename_uri_int_CHECK do { \

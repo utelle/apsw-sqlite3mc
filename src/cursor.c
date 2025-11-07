@@ -65,6 +65,8 @@ struct APSWCursor
   /* bindings for query */
   PyObject *bindings;        /* dict or sequence */
   Py_ssize_t bindingsoffset; /* for sequence tracks how far along we are when dealing with multiple statements */
+  PyObject *convert_binding;
+  PyObject *convert_jsonb;
 
   /* iterator for executemany, original query string, prepare options */
   PyObject *emiter;
@@ -96,15 +98,24 @@ struct APSWCursor
 typedef struct APSWCursor APSWCursor;
 static PyTypeObject APSWCursorType;
 
-static PyObject *collections_abc_Mapping;
-
 /* CURSOR CODE */
 
-/* Macro for getting a tracer.  If our tracer is NULL then return connection tracer */
+/* Macro for getting a cal;back where the cursor inherits from connection:
 
-#define ROWTRACE (self->rowtrace ? self->rowtrace : self->connection->rowtrace)
+  - if cursor is set to PyNone then callback disabled
+  - if cursor is set then use that
+  - else cursor is NULL so use value from connection
+*/
 
-#define EXECTRACE (self->exectrace ? self->exectrace : self->connection->exectrace)
+#define GET_CALLBACK(name) ((self->name == Py_None) ? NULL : (self->name) ? self->name : self->connection->name)
+
+#define ROWTRACE GET_CALLBACK(rowtrace)
+
+#define EXECTRACE GET_CALLBACK(exectrace)
+
+#define CONVERT_BINDING GET_CALLBACK(convert_binding)
+
+#define CONVERT_JSONB GET_CALLBACK(convert_jsonb)
 
 /* prevent recursive use of the cursor - eg a callback function or
    tracer executing new SQL while the call stack above is in a
@@ -230,6 +241,8 @@ APSWCursor_close_internal(APSWCursor *self, int force)
   /* no need for tracing */
   Py_CLEAR(self->exectrace);
   Py_CLEAR(self->rowtrace);
+  Py_CLEAR(self->convert_binding);
+  Py_CLEAR(self->convert_jsonb);
 
   /* we no longer need connection */
   Py_CLEAR(self->connection);
@@ -298,7 +311,77 @@ APSWCursor_tp_traverse(PyObject *self_, visitproc visit, void *arg)
   Py_VISIT(self->connection);
   Py_VISIT(self->exectrace);
   Py_VISIT(self->rowtrace);
+  Py_VISIT(self->convert_binding);
+  Py_VISIT(self->convert_jsonb);
   return 0;
+}
+
+/* Converts column to PyObject.  Returns a new reference. Almost identical to above
+   but we cannot just use sqlite3_column_value and then call the above function as
+   SQLite doesn't allow that ("unprotected values") and assertion failure */
+#undef convert_column_to_pyobject
+static PyObject *
+convert_column_to_pyobject(APSWCursor *self, int col)
+{
+#include "faultinject.h"
+  assert(self->in_query);
+
+  sqlite3_stmt *stmt = self->statement->vdbestatement;
+  int coltype;
+
+  coltype = sqlite3_column_type(stmt, col);
+
+  switch (coltype)
+  {
+  case SQLITE_INTEGER: {
+    sqlite3_int64 val;
+    val = sqlite3_column_int64(stmt, col);
+    return PyLong_FromLongLong(val);
+  }
+
+  case SQLITE_FLOAT: {
+    double d;
+    d = sqlite3_column_double(stmt, col);
+    return PyFloat_FromDouble(d);
+  }
+  case SQLITE_TEXT: {
+    const char *data;
+    size_t len;
+    data = (const char *)sqlite3_column_text(stmt, col);
+    len = sqlite3_column_bytes(stmt, col);
+    return PyUnicode_FromStringAndSize(data, len);
+  }
+
+  default:
+  case SQLITE_NULL: {
+    void *pointer;
+    pointer = sqlite3_value_pointer(sqlite3_column_value(stmt, col), PYOBJECT_BIND_TAG);
+    if (pointer)
+      return Py_NewRef((PyObject *)pointer);
+    Py_RETURN_NONE;
+  }
+
+  case SQLITE_BLOB: {
+    const void *data;
+    size_t len;
+    data = sqlite3_column_blob(stmt, col);
+    len = sqlite3_column_bytes(stmt, col);
+
+    PyObject *value = PyBytes_FromStringAndSize(data, len);
+
+    if (value && CONVERT_JSONB && jsonb_detect_internal(data, len))
+    {
+      PyObject *new_value = NULL;
+      PyObject *vargs[] = { NULL, (PyObject*)self, PyLong_FromLong(col), value };
+      if (vargs[2])
+        new_value = PyObject_Vectorcall(CONVERT_JSONB, vargs + 1, 3 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
+      Py_XDECREF(vargs[2]);
+      Py_DECREF(value);
+      value = new_value;
+    }
+    return value;
+  }
+  }
 }
 
 static const char *description_formats[] = { "(ss)", "(ssOOOOO)", "(sssss)" };
@@ -539,7 +622,7 @@ APSWCursor_is_dict_binding(PyObject *obj)
     return 0;
 
   /* abstract base classes final answer */
-  if (collections_abc_Mapping && PyObject_IsInstance(obj, collections_abc_Mapping) == 1)
+  if (PyObject_IsInstance(obj, collections_abc_Mapping) == 1)
     return 1;
 
   return 0;
@@ -553,11 +636,9 @@ APSWCursor_dobinding(APSWCursor *self, int arg, PyObject *obj)
   /* DUPLICATE(ish) code: this is substantially similar to the code in
      set_context_result.  If you fix anything here then do it there as
      well.
+  */
 
-     These have to release the GIL for the bind calls because SQLite
-     acquires the db mutex during the bind (unbinding the previous value)
-     and we prevent deadlocks by always releasing the GIL before sqlite
-     mutex acquire */
+  assert(sqlite3_mutex_held(sqlite3_db_mutex(self->connection->db)));
 
   int res = SQLITE_OK;
 
@@ -615,6 +696,50 @@ APSWCursor_dobinding(APSWCursor *self, int arg, PyObject *obj)
                                pyobject_bind_destructor);
     /* sqlite3_bind_pointer calls the destructor on failure */
   }
+#ifdef SQLITE_ENABLE_CARRAY
+  else if (PyObject_TypeCheck(obj, &CArrayBindType) == 1)
+  {
+    CArrayBind *cab = (CArrayBind *)obj;
+#ifdef APSW_MODIFIED_CARRAY
+    Py_INCREF(obj);
+    res = sqlite3_carray_bind_apsw(self->statement->vdbestatement, arg, cab->aData, cab->nData, cab->mFlags,
+                                   CArrayBind_bind_destructor, obj);
+#else
+    res = sqlite3_carray_bind(self->statement->vdbestatement, arg, cab->aData, cab->nData, cab->mFlags,
+                              SQLITE_TRANSIENT);
+#endif
+  }
+#endif
+  else if (CONVERT_BINDING)
+  {
+    PyObject *vargs[] = { NULL, (PyObject *)self, PyLong_FromLong(arg), obj };
+    if (!vargs[2])
+      return -1;
+    if (Py_EnterRecursiveCall(" converting binding"))
+    {
+      Py_DECREF(vargs[2]);
+      return -1;
+    }
+    PyObject *converted = PyObject_Vectorcall(CONVERT_BINDING, vargs + 1, 3 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
+    Py_LeaveRecursiveCall();
+    Py_DECREF(vargs[2]);
+    if (!converted)
+    {
+      AddTraceBackHere(__FILE__, __LINE__, "Cursor.convert_binding", "{s: i, s: O}", "number", arg, "value", obj);
+      return -1;
+    }
+    if (converted == obj)
+    {
+      PyErr_Format(PyExc_ValueError, "convert_binding returned the same object it was passed");
+      AddTraceBackHere(__FILE__, __LINE__, "Cursor.dobinding", "{s: i, s: O}", "number", arg, "value", obj);
+      Py_DECREF(converted);
+      return -1;
+    }
+
+    res = APSWCursor_dobinding(self, arg, converted);
+    Py_DECREF(converted);
+    return res;
+  }
   else
   {
     PyErr_Format(PyExc_TypeError, "Bad binding argument type supplied - argument #%d: type %s",
@@ -654,7 +779,11 @@ APSWCursor_dobindings(APSWCursor *self)
   }
 
   /* a dictionary? */
-  if (self->bindings && APSWCursor_is_dict_binding(self->bindings))
+  int is_dict = self->bindings && APSWCursor_is_dict_binding(self->bindings);
+  /* a PyObject_IsInstance call can exception in above */
+  if (PyErr_Occurred())
+    return -1;
+  if (is_dict)
   {
     for (arg = 1; arg <= nargs; arg++)
     {
@@ -1044,7 +1173,10 @@ APSWCursor_execute(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_
 
   if (self->bindings)
   {
-    if (APSWCursor_is_dict_binding(self->bindings) || Py_Is(self->bindings, apsw_cursor_null_bindings))
+    int is_dict = APSWCursor_is_dict_binding(self->bindings);
+    if (PyErr_Occurred())
+      goto error_out;
+    if (is_dict || Py_Is(self->bindings, apsw_cursor_null_bindings))
       Py_INCREF(self->bindings);
     else
     {
@@ -1068,31 +1200,30 @@ APSWCursor_execute(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_
   self->bindingsoffset = 0;
   savedbindingsoffset = 0;
 
+  self->in_query = 1;
   if (APSWCursor_dobindings(self))
     goto error_out;
   if (EXECTRACE)
   {
-    self->in_query = 1;
     if (APSWCursor_do_exec_trace(self, savedbindingsoffset))
-    {
-      self->in_query = 0;
       goto error_out;
-    }
   }
 
   self->status = C_BEGIN;
-  self->in_query = 1;
   retval = APSWCursor_step(self);
-  self->in_query = 0;
   if (!retval)
     goto error_out;
 
   sqlite3_mutex_leave(self->connection->dbmutex);
+  self->in_query = 0;
+
   return Py_NewRef(retval);
 
 error_out:
   assert(PyErr_Occurred());
   sqlite3_mutex_leave(self->connection->dbmutex);
+  self->in_query = 0;
+
   return NULL;
 }
 
@@ -1290,11 +1421,11 @@ APSWCursor_next(PyObject *self_)
     return NULL;
 
 again:
+  self->in_query = 1;
+
   if (self->status == C_BEGIN)
   {
-    self->in_query = 1;
     int step = !!APSWCursor_step(self);
-    self->in_query = 0;
     if (!step)
       goto error;
   }
@@ -1303,6 +1434,7 @@ again:
   {
     /* end of iteration */
     sqlite3_mutex_leave(self->connection->dbmutex);
+    self->in_query = 0;
     return NULL;
   }
 
@@ -1318,16 +1450,14 @@ again:
 
   for (i = 0; i < numcols; i++)
   {
-    item = convert_column_to_pyobject(self->statement->vdbestatement, i);
+    item = convert_column_to_pyobject(self, i);
     if (!item)
       goto error;
     PyTuple_SET_ITEM(retval, i, item);
   }
   if (ROWTRACE)
   {
-    self->in_query = 1;
     PyObject *r2 = APSWCursor_do_row_trace(self, retval);
-    self->in_query = 0;
     Py_CLEAR(retval);
     if (!r2)
       goto error;
@@ -1339,6 +1469,7 @@ again:
     retval = r2;
   }
   sqlite3_mutex_leave(self->connection->dbmutex);
+  self->in_query = 0;
   return retval;
 
 error:
@@ -1346,6 +1477,7 @@ error:
   assert(PyErr_Occurred());
 
   sqlite3_mutex_leave(self->connection->dbmutex);
+  self->in_query = 0;
   return NULL;
 }
 
@@ -1363,7 +1495,7 @@ APSWCursor_iter(PyObject *self_)
   return Py_NewRef(self_);
 }
 
-/** .. method:: set_exec_trace(callable: Optional[ExecTracer]) -> None
+/** .. method:: set_exec_trace(callable: ExecTracer | None) -> None
 
   Sets the :attr:`execution tracer <Cursor.exec_trace>`
 */
@@ -1382,6 +1514,9 @@ APSWCursor_set_exec_trace(PyObject *self_, PyObject *const *fast_args, Py_ssize_
     ARG_EPILOG(NULL, Cursor_set_exec_trace_USAGE, );
   }
 
+  if (!callable)
+    callable = Py_None;
+
   Py_XINCREF(callable);
   Py_XDECREF(self->exectrace);
   self->exectrace = callable;
@@ -1389,9 +1524,10 @@ APSWCursor_set_exec_trace(PyObject *self_, PyObject *const *fast_args, Py_ssize_
   Py_RETURN_NONE;
 }
 
-/** .. method:: set_row_trace(callable: Optional[RowTracer]) -> None
+/** .. method:: set_row_trace(callable: RowTracer | None) -> None
 
-  Sets the :attr:`row tracer <Cursor.row_trace>`
+  Sets the :attr:`row tracer <Cursor.row_trace>`.  If ``None``
+  then row tracing is disabled for this cursor.
 */
 
 static PyObject *
@@ -1409,6 +1545,9 @@ APSWCursor_set_row_trace(PyObject *self_, PyObject *const *fast_args, Py_ssize_t
     ARG_EPILOG(NULL, Cursor_set_row_trace_USAGE, );
   }
 
+  if (!callable)
+    callable = Py_None;
+
   Py_XINCREF(callable);
   Py_XDECREF(self->rowtrace);
   self->rowtrace = callable;
@@ -1416,7 +1555,7 @@ APSWCursor_set_row_trace(PyObject *self_, PyObject *const *fast_args, Py_ssize_t
   Py_RETURN_NONE;
 }
 
-/** .. method:: get_exec_trace() -> Optional[ExecTracer]
+/** .. method:: get_exec_trace() -> ExecTracer | None
 
   Returns the currently installed :attr:`execution tracer
   <Cursor.exec_trace>`
@@ -1437,7 +1576,7 @@ APSWCursor_get_exec_trace(PyObject *self_, PyObject *Py_UNUSED(unused))
   return Py_NewRef(ret);
 }
 
-/** .. method:: get_row_trace() -> Optional[RowTracer]
+/** .. method:: get_row_trace() -> RowTracer | None
 
   Returns the currently installed (via :meth:`~Cursor.set_row_trace`)
   row tracer.
@@ -1507,15 +1646,100 @@ APSWCursor_fetchone(PyObject *self_, PyObject *Py_UNUSED(unused))
   return res;
 }
 
+/** .. attribute:: convert_binding
+  :type: ConvertBinding | None
+
+  Called with the :class:`Cursor`, parameter number, and value when
+  an unsuppported type is used in a binding. Note that parameter
+  numbers start at 1.
+
+  If set to ``None`` then conversion is disabled for this cursor.
+
+  .. seealso::
+
+    * :attr:`bindings_count`
+    * :attr:`bindings_names`
+
+*/
+static PyObject *
+APSWCursor_get_convert_binding(PyObject *self_, void *Py_UNUSED(unused))
+{
+  APSWCursor *self = (APSWCursor *)self_;
+  CHECK_CURSOR_CLOSED(NULL);
+
+  if (self->convert_binding)
+    return Py_NewRef(self->convert_binding);
+  Py_RETURN_NONE;
+}
+
+static int
+APSWCursor_set_convert_binding(PyObject *self_, PyObject *value, void *Py_UNUSED(unused))
+{
+  APSWCursor *self = (APSWCursor *)self_;
+  CHECK_CURSOR_CLOSED(-1);
+
+  if (!Py_IsNone(value) && !PyCallable_Check(value))
+  {
+    PyErr_Format(PyExc_TypeError, "convert_binding expected a Callable not %s", Py_TypeName(value));
+    return -1;
+  }
+  Py_CLEAR(self->convert_binding);
+  self->convert_binding = Py_NewRef(value);
+  return 0;
+}
+
+/** .. attribute:: convert_jsonb
+  :type: ConvertJSONB | None
+
+  Called with the :class:`Cursor`, column number, and bytes value
+  when a blob value is valid JSONB.  The callback can :func:`decode the
+  <jsonb_decode>` or return the bytes as is.
+
+  If set to ``None`` then conversion is disabled for this cursor.
+
+  .. seealso::
+
+    You can consult the description to get further confirmation if
+    the value is intended to be JSONB.
+
+    * :attr:`Cursor.description_full`
+    * :attr:`Cursor.description`
+*/
+static PyObject *
+APSWCursor_get_convert_jsonb(PyObject *self_, void *Py_UNUSED(unused))
+{
+  APSWCursor *self = (APSWCursor *)self_;
+  CHECK_CURSOR_CLOSED(NULL);
+
+  if (self->convert_jsonb)
+    return Py_NewRef(self->convert_jsonb);
+  Py_RETURN_NONE;
+}
+
+static int
+APSWCursor_set_convert_jsonb(PyObject *self_, PyObject *value, void *Py_UNUSED(unused))
+{
+  APSWCursor *self = (APSWCursor *)self_;
+  CHECK_CURSOR_CLOSED(-1);
+
+  if (!Py_IsNone(value) && !PyCallable_Check(value))
+  {
+    PyErr_Format(PyExc_TypeError, "convert_jsonb expected a Callable not %s", Py_TypeName(value));
+    return -1;
+  }
+  Py_CLEAR(self->convert_jsonb);
+  self->convert_jsonb = Py_NewRef(value);
+  return 0;
+}
+
 /** .. attribute:: exec_trace
-  :type: Optional[ExecTracer]
+  :type: ExecTracer | None
 
   Called with the cursor, statement and bindings for
   each :meth:`~Cursor.execute` or :meth:`~Cursor.executemany` on this
   cursor.
 
-  If *callable* is *None* then any existing execution tracer is
-  unregistered.
+  If *callable* is *None* then execution tracing is disabled for the cursor..
 
   .. seealso::
 
@@ -1547,20 +1771,18 @@ APSWCursor_set_exec_trace_attr(PyObject *self_, PyObject *value, void *Py_UNUSED
     return -1;
   }
   Py_CLEAR(self->exectrace);
-  if (!Py_IsNone(value))
-    self->exectrace = Py_NewRef(value);
+  self->exectrace = Py_NewRef(value);
   return 0;
 }
 
 /** .. attribute:: row_trace
-  :type: Optional[RowTracer]
+  :type: RowTracer | None
 
   Called with cursor and row being returned.  You can
   change the data that is returned or cause the row to be skipped
   altogether.
 
-  If *callable* is *None* then any existing row tracer is
-  unregistered.
+  If ``None`` then row tracing is disabled for this cursor.
 
   .. seealso::
 
@@ -1592,8 +1814,7 @@ APSWCursor_set_row_trace_attr(PyObject *self_, PyObject *value, void *Py_UNUSED(
     return -1;
   }
   Py_CLEAR(self->rowtrace);
-  if (!Py_IsNone(value))
-    self->rowtrace = Py_NewRef(value);
+  self->rowtrace = Py_NewRef(value);
   return 0;
 }
 
@@ -1768,6 +1989,31 @@ APSWCursor_expanded_sql(PyObject *self_, void *Py_UNUSED(unused))
   return res;
 }
 
+/** .. attribute:: sql
+  :type: str
+
+  The SQL being executed
+
+  -* sqlite3_sql
+*/
+static PyObject *
+APSWCursor_sql(PyObject *self_, void *Py_UNUSED(unused))
+{
+  APSWCursor *self = (APSWCursor *)self_;
+  PyObject *res;
+
+  CHECK_CURSOR_CLOSED(NULL);
+
+  if (!self->statement)
+    Py_RETURN_NONE;
+
+  DBMUTEX_ENSURE(self->connection->dbmutex);
+  res = convertutf8string(sqlite3_sql(self->statement->vdbestatement));
+  sqlite3_mutex_leave(self->connection->dbmutex);
+
+  return res;
+}
+
 /** .. attribute:: get
  :type: Any
 
@@ -1808,6 +2054,7 @@ APSWCursor_get(PyObject *self_, void *Py_UNUSED(unused))
     Py_RETURN_NONE;
 
   DBMUTEX_ENSURE(self->connection->dbmutex);
+  self->in_query = 1;
 
   do
   {
@@ -1825,7 +2072,7 @@ APSWCursor_get(PyObject *self_, void *Py_UNUSED(unused))
     numcols = sqlite3_data_count(self->statement->vdbestatement);
     if (numcols == 1)
     {
-      the_row = convert_column_to_pyobject(self->statement->vdbestatement, 0);
+      the_row = convert_column_to_pyobject(self, 0);
       if (!the_row)
         goto error;
     }
@@ -1836,7 +2083,7 @@ APSWCursor_get(PyObject *self_, void *Py_UNUSED(unused))
         goto error;
       for (i = 0; i < numcols; i++)
       {
-        item = convert_column_to_pyobject(self->statement->vdbestatement, i);
+        item = convert_column_to_pyobject(self, i);
         if (!item)
           goto error;
         PyTuple_SET_ITEM(the_row, i, item);
@@ -1848,14 +2095,13 @@ APSWCursor_get(PyObject *self_, void *Py_UNUSED(unused))
         goto error;
       Py_CLEAR(the_row);
     }
-    self->in_query = 1;
     step = APSWCursor_step(self);
-    self->in_query = 0;
     if (step == NULL)
       goto error;
   } while (self->status != C_DONE);
 
   sqlite3_mutex_leave(self->connection->dbmutex);
+  self->in_query = 0;
 
   if (the_list)
     return the_list;
@@ -1864,6 +2110,7 @@ APSWCursor_get(PyObject *self_, void *Py_UNUSED(unused))
 
 error:
   sqlite3_mutex_leave(self->connection->dbmutex);
+  self->in_query = 0;
   assert(PyErr_Occurred());
   Py_CLEAR(the_list);
   Py_CLEAR(the_row);
@@ -1905,28 +2152,29 @@ static PyMethodDef APSWCursor_methods[] = {
   { 0, 0, 0, 0 } /* Sentinel */
 };
 
-static PyGetSetDef APSWCursor_getset[]
-    = { { "description", APSWCursor_getdescription_dbapi, NULL, Cursor_description_DOC, NULL },
+static PyGetSetDef APSWCursor_getset[] = {
+  { "description", APSWCursor_getdescription_dbapi, NULL, Cursor_description_DOC, NULL },
 #ifdef SQLITE_ENABLE_COLUMN_METADATA
-        { "description_full", APSWCursor_get_description_full, NULL, Cursor_description_full_DOC, NULL },
+  { "description_full", APSWCursor_get_description_full, NULL, Cursor_description_full_DOC, NULL },
 #endif
-        { "is_explain", APSWCursor_is_explain, NULL, Cursor_is_explain_DOC, NULL },
-        { "is_readonly", APSWCursor_is_readonly, NULL, Cursor_is_readonly_DOC, NULL },
-        { "has_vdbe", APSWCursor_has_vdbe, NULL, Cursor_has_vdbe_DOC, NULL },
-        { "bindings_count", APSWCursor_bindings_count, NULL, Cursor_bindings_count_DOC, NULL },
-        { "bindings_names", APSWCursor_bindings_names, NULL, Cursor_bindings_names_DOC, NULL },
-        { "expanded_sql", APSWCursor_expanded_sql, NULL, Cursor_expanded_sql_DOC, NULL },
-        { "exec_trace", APSWCursor_get_exec_trace_attr, APSWCursor_set_exec_trace_attr,
-          Cursor_exec_trace_DOC },
-        { Cursor_exec_trace_OLDNAME, APSWCursor_get_exec_trace_attr, APSWCursor_set_exec_trace_attr,
-          Cursor_exec_trace_OLDDOC },
-        { "row_trace", APSWCursor_get_row_trace_attr, APSWCursor_set_row_trace_attr,
-          Cursor_row_trace_DOC },
-        { Cursor_row_trace_OLDNAME, APSWCursor_get_row_trace_attr, APSWCursor_set_row_trace_attr,
-          Cursor_row_trace_OLDDOC },
-        { "connection", APSWCursor_get_connection_attr, NULL, Cursor_connection_DOC },
-        { "get", APSWCursor_get, NULL, Cursor_get_DOC },
-        { NULL, NULL, NULL, NULL, NULL } };
+  { "is_explain", APSWCursor_is_explain, NULL, Cursor_is_explain_DOC, NULL },
+  { "is_readonly", APSWCursor_is_readonly, NULL, Cursor_is_readonly_DOC, NULL },
+  { "has_vdbe", APSWCursor_has_vdbe, NULL, Cursor_has_vdbe_DOC, NULL },
+  { "bindings_count", APSWCursor_bindings_count, NULL, Cursor_bindings_count_DOC, NULL },
+  { "bindings_names", APSWCursor_bindings_names, NULL, Cursor_bindings_names_DOC, NULL },
+  { "expanded_sql", APSWCursor_expanded_sql, NULL, Cursor_expanded_sql_DOC, NULL },
+  { "sql", APSWCursor_sql, NULL, Cursor_sql_DOC, NULL },
+  { "convert_binding", APSWCursor_get_convert_binding, APSWCursor_set_convert_binding, Cursor_convert_binding_DOC },
+  { "convert_jsonb", APSWCursor_get_convert_jsonb, APSWCursor_set_convert_jsonb, Cursor_convert_jsonb_DOC },
+  { "exec_trace", APSWCursor_get_exec_trace_attr, APSWCursor_set_exec_trace_attr, Cursor_exec_trace_DOC },
+  { Cursor_exec_trace_OLDNAME, APSWCursor_get_exec_trace_attr, APSWCursor_set_exec_trace_attr,
+    Cursor_exec_trace_OLDDOC },
+  { "row_trace", APSWCursor_get_row_trace_attr, APSWCursor_set_row_trace_attr, Cursor_row_trace_DOC },
+  { Cursor_row_trace_OLDNAME, APSWCursor_get_row_trace_attr, APSWCursor_set_row_trace_attr, Cursor_row_trace_OLDDOC },
+  { "connection", APSWCursor_get_connection_attr, NULL, Cursor_connection_DOC },
+  { "get", APSWCursor_get, NULL, Cursor_get_DOC },
+  { NULL, NULL, NULL, NULL, NULL }
+};
 
 static PyTypeObject APSWCursorType = {
   PyVarObject_HEAD_INIT(NULL, 0).tp_name = "apsw.Cursor",
@@ -1961,9 +2209,10 @@ PyObjectBind_init(PyObject *self_, PyObject *args, PyObject *kwargs)
 }
 
 static void
-PyObjectBind_finalize(PyObject *self)
+PyObjectBind_dealloc(PyObject *self)
 {
   Py_CLEAR(((PyObjectBind *)self)->object);
+  Py_TpFree(self);
 }
 
 static PyTypeObject PyObjectBindType = {
@@ -1971,7 +2220,7 @@ static PyTypeObject PyObjectBindType = {
   .tp_basicsize = sizeof(PyObjectBind),
   .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
   .tp_init = PyObjectBind_init,
-  .tp_finalize = PyObjectBind_finalize,
+  .tp_dealloc = PyObjectBind_dealloc,
   .tp_new = PyType_GenericNew,
   .tp_doc = Apsw_pyobject_DOC,
 };

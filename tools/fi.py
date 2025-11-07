@@ -121,6 +121,7 @@ def exercise(example_code, expect_exception):
 
     # PreUpdate.tp_str needs this early
     if hasattr(con, "preupdate_hook"):
+
         def hook(update):
             str(update)
             for n in dir(update):
@@ -129,7 +130,7 @@ def exercise(example_code, expect_exception):
 
         con.preupdate_hook(hook)
         con.execute("create table preupdate(a,b,c,d,e); insert into preupdate values(null, 3, 3.3, 'three', x'abcdef')")
-        vals = [None, 5, 5.5, 'four', b'aaaaaaa']
+        vals = [None, 5, 5.5, "four", b"aaaaaaa"]
         for i in range(len(vals)):
             con.execute("update preupdate set a=?, b=?, c=?, d=?, e=?", vals[i:] + vals[:i])
 
@@ -229,6 +230,39 @@ def exercise(example_code, expect_exception):
     con.pragma("user_version")
     con.pragma("user_version", 7)
 
+    # jsonb stuff
+
+    data = {
+        128: " " * 128,
+        1024: " " * 1024,
+        True: 1,
+        False: 0,
+        None: -1,
+        "more": {
+            "another": "nested",
+            True: True,
+            False: False,
+            None: None,
+            3: 4,
+            3.3: 5,
+            "to exercise": [
+                "seen tracking",
+                [
+                    "which",
+                    "should have",
+                    ["set", "addand", "discard", [3 + 4j]],
+                ],
+            ],
+        },
+    }
+    encoded = apsw.jsonb_encode(data, default=lambda x: ["deeper", {"stuff": ["here"]}])
+    apsw.jsonb_decode(encoded, parse_int=int, parse_float=float, object_hook=dict, array_hook=tuple)
+    apsw.jsonb_detect(encoded)
+
+    encoded = con.execute("select jsonb(?)", ("""[0x1234, 4., .3, "\\0 𐌼𐌰𐌲 𐌲𐌻𐌴𐍃 𐌹̈𐍄𐌰𐌽", "\\'", "\\"", "\\u1234"]""",)).get
+    apsw.jsonb_decode(encoded)
+
+    # fts5
     con.fts5_tokenizer("unicode61", ["remove_diacritics", "1"])
 
     # this needs to be a type that doesn't happen in synthesized faults
@@ -728,13 +762,15 @@ class Tester:
             "sys.stdout,": "string_sink,",
             # fix pprint
             "from pprint import pprint": "pprint = print",
+            # needs to reraise nested exceptions - absurd syntax from chatgpt so I can make it one line
+            'print("commit was not allowed")': "(inner := exc.__cause__ or exc.__context__) and (_ for _ in ()).throw(inner)",
         }
 
         example_files = []
         if not self.example_arg:
-            example_files.extend(list(pathlib.Path().glob("examples/*.py")))
+            example_files.extend(sorted(pathlib.Path().glob("examples/*.py")))
         else:
-            names = list(pathlib.Path().glob(f"examples/{self.example_arg}.py"))
+            names = sorted(pathlib.Path().glob(f"examples/{self.example_arg}.py"))
             if not names:
                 sys.exit(f"f{pattern=} matched no examples files")
             example_files.extend(names)
@@ -775,6 +811,8 @@ class Tester:
                 # runs the destructor on failure
                 "sqlite3_create_function_v2",
                 "sqlite3_window_function",
+                "sqlite3_carray_bind_apsw",
+                "sqlite3_carray_bind",
             }:
                 self.expect_exception.append(apsw_attr("ConnectionNotClosedError"))
                 self.expect_exception.append(apsw_attr("TooBigError"))  # code 18
@@ -821,6 +859,16 @@ class Tester:
                 self.expect_exception.append(apsw_attr("NoFTS5Error"))
                 return self.apsw_attr("SQLITE_ERROR")
 
+            # these call the destructor on bind failure so we need them to succeed
+            if fname in {
+                "sqlite3_bind_pointer",
+                "sqlite3_carray_bind",
+                "sqlite3_bind_blob64",
+                "sqlite3_bind_blob",
+            } or fname.startswith("sqlite3_bind_text"):
+                self.expect_exception.append(apsw_attr("TooBigError"))  # code 18
+                return self.ProceedReturn18
+
             if fname.startswith("sqlite3"):  # sqlite api as well as session stuff
                 self.expect_exception.append(apsw_attr("TooBigError"))
                 return self.apsw_attr("SQLITE_TOOBIG")
@@ -829,7 +877,11 @@ class Tester:
                 self.expect_exception.append(OverflowError)
                 return (-1, OverflowError, self.FAULTS)
 
-            if fname.startswith("Py") or fname in {"_PyBytes_Resize", "_PyTuple_Resize", "getfunctionargs"}:
+            if (
+                fname.startswith("Py")
+                or fname.startswith("jsonb_")
+                or fname in {"_PyBytes_Resize", "_PyTuple_Resize", "getfunctionargs"}
+            ):
                 # for ones returning -1 on error
                 self.expect_exception.append(self.FAULTT)
                 return (-1, *self.FAULT)

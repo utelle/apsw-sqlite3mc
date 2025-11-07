@@ -1,18 +1,9 @@
 import sys
 
 from typing import Optional, Callable, Any, Iterator, Iterable, Sequence, Literal, Protocol, TypeAlias, final
-import collections.abc
+from collections.abc import Mapping, Buffer
 import array
 import types
-
-# Anything that resembles a dictionary
-from collections.abc import Mapping
-
-# Anything that resembles a sequence of bytes
-if sys.version_info >= (3, 12):
-    Buffer: TypeAlias = collections.abc.Buffer
-else:
-    Buffer: TypeAlias = bytes
 
 SQLiteValue = None | int | float | Buffer | str
 """SQLite supports 5 types - None (NULL), 64 bit signed int, 64 bit
@@ -21,11 +12,22 @@ float, bytes (Buffer), and str (unicode text)"""
 SQLiteValues = tuple[SQLiteValue, ...]
 "A sequence of zero or more SQLiteValue"
 
-Bindings = Sequence[SQLiteValue | zeroblob] | Mapping[str, SQLiteValue | zeroblob]
-"""Query bindings are either a sequence of SQLiteValue, or a dict mapping names
-to SQLiteValues.  You can also provide zeroblob in Bindings. You can use
-dict subclasses or any type registered with :class:`collections.abc.Mapping`
-for named bindings"""
+class PyObjectBinding:
+    "Result of :meth:`pyobject`"
+    ...
+
+class CArrayBinding:
+    "Result of :meth:`carray`"
+    ...
+
+Binding = SQLiteValue | zeroblob | PyObjectBinding | CArrayBinding
+"""An individual binding can be any of the SQLiteValues.
+zeroblob, :meth:`pyobject`, or :meth:`carray`"""
+
+Bindings = Sequence[Binding] | Mapping[str, Binding]
+"""Query bindings are either a sequence of Binding, or a dict mapping string names
+to a Binding. You can use dict subclasses or any type registered with
+:class:`collections.abc.Mapping` for named bindings"""
 
 
 class AggregateClass(Protocol):
@@ -108,6 +110,18 @@ ExecTracer = Callable[[Cursor, str, Optional[Bindings]], bool]
 """Execution tracers are called with the cursor, sql query text, and the bindings
 used.  Return False/None to abort execution, or True to continue"""
 
+ConvertBinding = Callable[[Cursor, int, Any], SQLiteValue]
+"""Called with a cursor, parameter number, and value to convert
+into a supported SQLite value.  Note that parameter numbers begin at 1.
+This is a good location to call :func:`jsonb_encode` to convert values
+to :doc:`JSON representation <jsonb>`"""
+
+ConvertJSONB = Callable[[Cursor, int, bytes], Any]
+"""Called with a cursor, column number, and a bytes that is valid
+JSONB.  This is a good location to call :func:`jsonb_decode` to
+convert :doc:`JSON representation <jsonb>` into any Python
+value"""
+
 Authorizer = Callable[[int, Optional[str], Optional[str], Optional[str], Optional[str]], int]
 """Authorizers are called with an operation code and 4 strings (which could be None) depending
 on the operatation.  Return SQLITE_OK, SQLITE_DENY, or SQLITE_IGNORE"""
@@ -150,3 +164,17 @@ ChangesetInput = SessionStreamInput | Buffer
 
 SessionStreamOutput = Callable[[memoryview], None]
 """Streaming output callable is called with each block of streaming data"""
+
+JSONBTypes = (
+    str
+    | bool
+    | None
+    | int
+    | float
+    | list["JSONBTypes"]
+    | tuple["JSONBTypes"]
+    | Mapping[str | None | int | float | bool, "JSONBTypes"]
+)
+"""Used by :func:`apsw.jsonb_encode`. Mapping (dict) keys must be str
+in JSONB.  Like the builtin JSON module, None/int/float/bool keys will be
+stringized."""

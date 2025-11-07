@@ -5,19 +5,23 @@ from typing import Any
 
 
 def process(module: ast.Module, source: str) -> list[tuple[str, str, str]]:
+    # each result tuple is name, value (code), description (english)
     res = []
     body = module.body
     i = 0
 
     while i < len(body):
-        if isinstance(body[i], ast.If):
-            if not isinstance(body[i].body[0], ast.ClassDef):
-                i += 1
-                continue
-            klass = body[i].body[0]
-            code = ast.unparse(klass).split("\n")
-            code[0] = code[0].replace("class ", "").replace("(", "\\(")
-            res.append((klass.name, "\n".join(code), f"{ klass.name } Protocol"))
+        if  isinstance(body[i], ast.ClassDef):
+            klass = body[i]
+            comment = klass.body[0].value.value
+            code = ast.unparse(klass.body[1:]).split("\n")
+            if code == ["..."]:
+                code = []
+            if klass.bases:
+                assert klass.bases[0].id == "Protocol"
+                comment = "(Protocol) " + comment
+
+            res.append((klass.name, "\n".join(code), comment))
             i += 1
             continue
         if not isinstance(body[i], ast.Assign):
@@ -25,10 +29,13 @@ def process(module: ast.Module, source: str) -> list[tuple[str, str, str]]:
             continue
         name = ast.unparse(body[i].targets)
         value = ast.get_source_segment(source, body[i].value)
+        if name == "JSONBTypes":
+            value = value.replace('"JSONBTypes"', "JSONBTypes")
+        value = value.replace("\n    ", "\n")
         i += 1
-        assert isinstance(body[i], ast.Expr) and isinstance(
-            body[i].value, ast.Constant
-        ), f"Expecting constant at line { body[i].lineno }"
+        assert isinstance(body[i], ast.Expr) and isinstance(body[i].value, ast.Constant), (
+            f"Expecting constant at line {body[i].lineno}"
+        )
         descr = body[i].value.value
         assert isinstance(descr, str)
         i += 1
@@ -47,12 +54,14 @@ std_typing = {
     "Any",
     "Sequence",
     "Iterable",
-    "Mapping",
     "Protocol",
 }
 
 # stuff in collections.abc
-std_collections_abc = { "Buffer" }
+std_collections_abc = {
+    "Buffer",
+    "Mapping",
+}
 
 std_other = {"None", "int", "float", "bytes", "str", "dict", "tuple", "bool", "list", "memoryview"}
 
@@ -68,18 +77,18 @@ def sub(m: re.Match) -> str:
     text: str = m.group("name")
 
     if text in std_collections_abc:
-        return f":class:`~collections.abc.{ text }`{sp}"
+        return f":class:`~collections.abc.{text}`{sp}"
     if text in std_typing:
-        return f":class:`~typing.{ text }`{sp}"
+        return f":class:`~typing.{text}`{sp}"
     if text in std_other:
         if text in {"int", "bool", "float"}:
-            return f":class:`{ text }`{sp}"
+            return f":class:`{text}`{sp}"
         if text == "None":
-            return f":class:`{ text }`{sp}"
-        return f":class:`{ text }`{sp}"
+            return f":class:`{text}`{sp}"
+        return f":class:`{text}`{sp}"
     if text == "no_change":
-        return f":attr:`{ text }`{sp}"
-    return f":class:`{ text }`{sp}"
+        return f":attr:`{text}`{sp}"
+    return f":class:`{text}`{sp}"
 
 
 def nomunge(pattern: str, replacement: Any, value: str) -> str:
@@ -102,29 +111,47 @@ def output(doc: list[tuple[str, str, str]]) -> str:
     pattern = r"\b(?P<name>" + "|".join(std_other | std_collections_abc | std_typing | in_doc) + r")\b"
     res = ""
     for name, value, descr in doc:
-        value = nomunge(pattern, sub, value)
-        # I can't find a way of making *:class:`foo` work - the *
-        # makes the :class: not be understood, even with a zero width
-        # space.  So force a real space
-        value = value.replace("*", "* ")
+        is_protocol = descr.startswith("(Protocol)")
+        if not is_protocol:
+            value = nomunge(pattern, sub, value)
+            # I can't find a way of making *:class:`foo` work - the *
+            # makes the :class: not be understood, even with a zero width
+            # space.  So force a real space
+            value = value.replace("*", "* ")
         descr = nomunge(pattern, sub, descr)
         # easiest to fix in post ...
         descr = descr.replace(
             ":meth:`:class:`FTS5ExtensionApi`\​.query_phrase`", ":meth:`FTS5ExtensionApi.query_phrase`"
         )
-        res += f"""
-.. class:: { name }
+        if not is_protocol:
+            res += f"""
+.. class:: {name}
 
-{ valuefmt(value, indent="    | ") }
+{valuefmt(value, indent="    | ") if value else ""}
 
-{ valuefmt(descr, indent="    ") }
+{valuefmt(descr, indent="    ")}
+
+"""
+        else:
+            res += f"""
+
+.. class:: {name}
+
+{valuefmt(descr, indent="    ")}
+
+    .. code-block:: python
+
+{indent_lines(value, indent="        ")}
 
 """
     return res
 
+def indent_lines(text, indent):
+    lines = text.splitlines()
+    return "\n".join(indent + line for line in lines) + '\n'
 
 def valuefmt(value: str, indent: str) -> str:
-    return indent + f"\n{ indent }".join(value.split("\n"))
+    return indent + f"\n{indent}".join(value.split("\n"))
 
 
 if __name__ == "__main__":

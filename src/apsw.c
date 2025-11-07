@@ -31,7 +31,8 @@ Comprehensive :mod:`type annotations <typing>` :source:`are included
 tools like `mypy <https://mypy-lang.org/>`__.  You can refer to the
 types below for your annotations (eg as :class:`apsw.SQLiteValue`)
 
-Your source files should include::
+Your source files should include this line, which can be omitted in
+Python 3.14 onwards::
 
     from __future__ import annotations
 
@@ -97,8 +98,8 @@ API Reference
 #include "sqlite3.h"
 #endif
 
-#if SQLITE_VERSION_NUMBER < 3050000
-#error Your SQLite version is too old.  It must be at least 3.50
+#if SQLITE_VERSION_NUMBER < 3051000
+#error Your SQLite version is too old.  It must be at least 3.51
 #endif
 
 #include "sqlite_debug.h"
@@ -162,6 +163,8 @@ static int APSW_Should_Fault(const char *);
     good;                                                                                                              \
   } while (0)
 #endif
+
+static PyObject *collections_abc_Mapping = NULL;
 
 /* string constants struct */
 #include "stringconstants.c"
@@ -239,6 +242,13 @@ static void apsw_write_unraisable(PyObject *hookobject);
 /* The statement cache */
 #include "statementcache.c"
 
+/* jsonb serialization */
+#include "jsonb.c"
+
+#ifdef SQLITE_ENABLE_CARRAY
+#include "carray.c"
+#endif
+
 /* connections */
 #include "connection.c"
 
@@ -273,10 +283,55 @@ static int allow_missing_dict_bindings = 0;
    we are trying to hide the implementation details as much as possible.
 */
 
-/** .. method:: pyobject(object: Any)
+/** .. method:: pyobject(object: Any) -> PyObjectBinding
 
   Indicates a Python object is being provided as a
   :ref:`runtime value <pyobject>`.
+*/
+
+/** .. method:: carray(object: Buffer | tuple[str, ...] | tuple[Buffer, ...], *, start: int = 0, stop: int = -1, flags: int = -1) -> CArrayBinding
+
+  Indicates a Python object is being provided as a runtime array for the
+  `Carray extension <https://sqlite.org/carray.html>`__.  This is to provide
+  bulk numbers (int or float), strings, or blobs to a query,  The array will
+  be used without calling back into Python code or acquiring the GIL.  It takes
+  about 5% of the CPU time using Carray versus passing each value in one at a
+  time via Python.
+
+  See the :ref:`example <example_carray>`.
+
+  :param object: For numbers, any object that implements the buffer protocol as
+     a single contiguous binary data like :class:`bytes`, :class:`bytearray`,
+     :class:`array.array`, numpy.array etc.
+
+     Otherwise it should be a tuple of strings, or a tuple of binary data
+     objects.  All elements must be the same type.
+  :param start: Index of the first entry to bind
+  :param stop: Index to stop at - ie one beyond the last entry bound.  Default
+      is all remaining members.
+  :param flags: Default auto detect.
+
+      For numbers, detection is done from the buffer
+      `format code <https://docs.python.org/3/library/struct.html#byte-order-size-and-alignment>`__
+      and itemsize.  You can use ``format`` and ``itemsize`` attributes of :code:`memoryview(object)`
+      to see what they are.
+
+      Format ``i``, ``l``, ``q``
+          ``SQLITE_CARRAY_INT32`` or ``SQLITE_CARRAY_INT64`` based on itemsize
+      Format  ``d``
+          ``SQLITE_CARRAY_DOUBLE``
+
+      You can explicitly provide the type such as :code:`apsw.SQLITE_CARRAY_INT32`.  If
+      it is incorrect then the values will be nonsense.
+
+      If using a tuple of string or blobs, you can specify :code:`apsw.SQLITE_CARRAY_TEXT`
+      and :code:`apsw.SQLITE_CARRAY_BLOB` respectively, but they would be detected anyway.
+      A wrong value will fail.
+
+  .. note::
+
+    Carray support is only present if APSW was compiled with ``SQLITE_ENABLE_CARRAY`` such as
+    PyPi builds.  The array must have at least one member and at most 2 billion.
 */
 
 /** .. method:: sqlite_lib_version() -> str
@@ -1871,6 +1926,10 @@ static PyMethodDef module_methods[] = {
   { "session_config", (PyCFunction)apsw_session_config, METH_VARARGS, Apsw_session_config_DOC },
 #endif
 
+  {"jsonb_decode", (PyCFunction)JSONB_decode, METH_FASTCALL | METH_KEYWORDS, Apsw_jsonb_decode_DOC},
+  {"jsonb_encode", (PyCFunction)JSONB_encode, METH_FASTCALL | METH_KEYWORDS, Apsw_jsonb_encode_DOC},
+  {"jsonb_detect", (PyCFunction)JSONB_detect, METH_FASTCALL | METH_KEYWORDS, Apsw_jsonb_detect_DOC},
+
 #ifndef APSW_OMIT_OLD_NAMES
   { Apsw_sqlite_lib_version_OLDNAME, (PyCFunction)get_sqlite_version, METH_NOARGS, Apsw_sqlite_lib_version_OLDDOC },
   { Apsw_apsw_version_OLDNAME, (PyCFunction)get_apsw_version, METH_NOARGS, Apsw_apsw_version_OLDDOC },
@@ -1915,6 +1974,9 @@ PyInit_apsw(void)
       || PyType_Ready(&SqliteIndexInfoType) < 0 || PyType_Ready(&apsw_no_change_type) < 0
       || PyType_Ready(&APSWFTS5TokenizerType) < 0 || PyType_Ready(&APSWFTS5ExtensionAPIType) < 0
       || PyType_Ready(&PyObjectBindType) < 0
+#ifdef SQLITE_ENABLE_CARRAY
+      || PyType_Ready(&CArrayBindType) < 0
+#endif
 #ifdef SQLITE_ENABLE_SESSION
       || PyType_Ready(&APSWSessionType) < 0 || PyType_Ready(&APSWTableChangeType) < 0
       || PyType_Ready(&APSWChangesetType) < 0 || PyType_Ready(&APSWChangesetBuilderType) < 0
@@ -1973,6 +2035,9 @@ PyInit_apsw(void)
   ADD(FTS5Tokenizer, APSWFTS5TokenizerType);
   ADD(FTS5ExtensionApi, APSWFTS5ExtensionAPIType);
   ADD(pyobject, PyObjectBindType);
+#ifdef SQLITE_ENABLE_CARRAY
+  ADD(carray, CArrayBindType);
+#endif
 #ifdef SQLITE_ENABLE_SESSION
   ADD(Session, APSWSessionType);
   ADD(Changeset, APSWChangesetType);
@@ -2033,6 +2098,16 @@ PyInit_apsw(void)
 #else
   if (PyModule_AddObject(m, "using_amalgamation", Py_NewRef(Py_False)))
     goto fail;
+#endif
+
+#ifdef APSW_USE_SQLITE_AMALGAMATION
+  if (PyModule_AddStringConstant(m, "SQLITE_SCM_BRANCH", SQLITE_SCM_BRANCH))
+    goto fail;
+  if (PyModule_AddStringConstant(m, "SQLITE_SCM_TAGS", SQLITE_SCM_TAGS))
+    goto fail;
+  if (PyModule_AddStringConstant(m, "SQLITE_SCM_DATETIME", SQLITE_SCM_DATETIME))
+    goto fail;
+
 #endif
 
   /** .. attribute:: no_change
@@ -2108,6 +2183,9 @@ modules etc. For example::
       collections_abc_Mapping = PyObject_GetAttrString(mod, "Mapping");
       Py_DECREF(mod);
     }
+    /* should always have succeeded */
+    if(!mod || !collections_abc_Mapping)
+      goto fail;
   }
 
   PyModule_AddStringConstant(m, "mc_version", SQLITE3MC_VERSION_STRING);

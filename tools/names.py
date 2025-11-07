@@ -83,6 +83,8 @@ def run_tests():
     for sub, repl in (
         ("from .ftstests import *", "from apsw.tests.ftstests import *"),
         ("from .sessiontests import *", "from apsw.tests.sessiontests import *"),
+        ("from .jsonb import *", "from apsw.tests.jsonb import *"),
+        ("from .carray import *", "from apsw.tests.carray import *"),
     ):
         old_source = old_source.replace(sub, repl)
 

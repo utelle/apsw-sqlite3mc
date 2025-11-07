@@ -103,13 +103,13 @@ for row in connection.execute("select * from point"):
 # a simple value
 event = "system started"
 # DO NOT DO THIS
-query = f"insert into log values(0, '{ event }')"
+query = f"insert into log values(0, '{event}')"
 print("query:", query)
 
 # BECAUSE ... a bad guy could provide a value like this
 event = "bad guy here') ; drop table important; -- comment"
 # which has effects like this
-query = f"insert into log values(0, '{ event }')"
+query = f"insert into log values(0, '{event}')"
 print("bad guy:", query)
 
 ### bindings_sequence: Bindings (sequence)
@@ -277,7 +277,7 @@ connection.row_trace = None
 
 def ilove7(*args: apsw.SQLiteValue) -> int:
     "A scalar function"
-    print(f"ilove7 got { args } but I love 7")
+    print(f"ilove7 got {args} but I love 7")
     return 7
 
 
@@ -489,7 +489,7 @@ class Point(apsw.ext.SQLiteTypeAdapter):
         self.y = y
 
     def __repr__(self) -> str:
-        return f"Point({ self.x }, { self.y })"
+        return f"Point({self.x}, {self.y})"
 
     def __eq__(self, other: object) -> bool:
         return (
@@ -500,7 +500,7 @@ class Point(apsw.ext.SQLiteTypeAdapter):
 
     def to_sqlite_value(self) -> str:
         # called to convert Point into something SQLite supports
-        return f"{ self.x };{ self.y }"
+        return f"{self.x};{self.y}"
 
     # This converter will be registered
     @classmethod
@@ -510,7 +510,7 @@ class Point(apsw.ext.SQLiteTypeAdapter):
 
 # Existing types
 def complex_to_sqlite_value(c: complex) -> str:
-    return f"{ c.real }+{ c.imag }"
+    return f"{c.real}+{c.imag}"
 
 
 def datetime_to_sqlite_value(dt: datetime.datetime) -> float:
@@ -561,7 +561,7 @@ print("inserted", test_data)
 print("querying data")
 for row in connection.execute("select * from conversion"):
     for i, value in enumerate(row):
-        print(f"column {i} = { value !r}")
+        print(f"column {i} = {value!r}")
 
 # clear registrar
 connection.cursor_factory = apsw.Cursor
@@ -657,7 +657,9 @@ with apsw.ext.query_limit(connection, timeout=0.2):
     ):
         pass
 
-print(f"After {time.monotonic() - start:.3f} seconds, we hit {number=}")
+print(
+    f"After {time.monotonic() - start:.3f} seconds, we hit {number=}"
+)
 
 # We used the default "no exception" exception.  Lets have an explicit exception.
 # with both row and time limits ...
@@ -924,7 +926,7 @@ try:
             """create table example(x,y,z);
                            insert into example values (3,4,5)"""
         )
-except apsw.ConstraintError:
+except apsw.ConstraintError as exc:
     print("commit was not allowed")
 
 connection.set_commit_hook(None)
@@ -941,7 +943,7 @@ def my_update_hook(
 ) -> None:
     op: str = apsw.mapping_authorizer_function[type]
     print(
-        f"Updated: { op } db { db_name }, table { table_name }, rowid { rowid }"
+        f"Updated: {op} db {db_name}, table {table_name}, rowid {rowid}"
     )
 
 
@@ -1191,7 +1193,7 @@ class ObfuscatedVFSFile(apsw.VFSFile):
             return super().xFileControl(op, ptr)
         # implement our own pragma
         p = apsw.VFSFcntlPragma(ptr)
-        print(f"pragma received { p.name } = { p.value }")
+        print(f"pragma received {p.name} = {p.value}")
         # what do we understand?
         if p.name == "my_custom_pragma":
             p.result = "orange"
@@ -1323,11 +1325,9 @@ print(output.getvalue())
 # for per connection statistics.
 
 current_usage, max_usage = apsw.status(apsw.SQLITE_STATUS_MEMORY_USED)
-print(f"SQLite memory usage { current_usage } max { max_usage }")
+print(f"SQLite memory usage {current_usage} max {max_usage}")
 schema_used, _ = connection.status(apsw.SQLITE_DBSTATUS_SCHEMA_USED)
-print(
-    f"{ schema_used } bytes used to store schema for this connection"
-)
+print(f"{schema_used} bytes used to store schema for this connection")
 
 ### trace_v2: Tracing
 # This shows using :meth:`Connection.trace_v2`
@@ -1384,7 +1384,7 @@ connection.trace_v2(0, None)
 # block of code does.  We use the same query from above.
 #
 # Only statistics that have changed are shown in the summary. There are
-# 20 SQLite values tracked including caching, and 20 system values.
+# 21 SQLite values tracked including caching, and 20 system values.
 
 with apsw.ext.ShowResourceUsage(
     sys.stdout, db=connection, scope="thread"
@@ -1424,7 +1424,9 @@ with apsw.ext.Trace(
 
     # pragma functions are virtual tables - see how many rows this processes even
     # though only one has 'pow'
-    connection.execute("SELECT narg FROM pragma_function_list WHERE name='pow'").get
+    connection.execute(
+        "SELECT narg FROM pragma_function_list WHERE name='pow'"
+    ).get
 
     # trigger that causes rollback
     connection.execute("""
@@ -1499,17 +1501,81 @@ con2 = apsw.Connection(connection.filename)
 # See values before change
 print("Before values")
 print(f'{connection.pragma("schema_version")=}')
-print(f'{connection.data_version()=}')
+print(f"{connection.data_version()=}")
 
 print("\nAfter values")
 # add to table from previous section
 con2.execute("insert into dummy values(1, 2, 3)")
-print(f'{connection.data_version()=}')
+print(f"{connection.data_version()=}")
 
 # and add a table.  changing an existing table definition etc also
 # bump the schema version
 con2.execute("create table more(x,y,z)")
 print(f'{connection.pragma("schema_version")=}')
+
+### carray: The CARRAY extension
+# The `extension <https://sqlite.org/carray.html>`__ makes it easy to
+# provide an array of numbers, strings, or binary blobs during a
+# query.  The array will be used without calling back into Python
+# code or acquiring the GIL.
+#
+# Arrays of numbers can come from binary data, :class:`array.array`,
+# `numpy arrays
+# <https://numpy.org/doc/stable/reference/generated/numpy.array.html>`__
+# etc.  Arrays of :class:`str` and :class:`blobs
+# <collections.abc.Buffer>` are supplied as :class:`tuples <tuple>`.
+# All data in the array has to be the same type.
+#
+# Use :meth:`apsw.carray` to wrap your data, and provide it as a
+# binding.  Note that it has ``start`` and ``stop`` parameters so you
+# can use a subset of the source data.  The format of the data is
+# detected, or an explicit ``flags`` parameter can be used.
+
+# We'll use the array module
+import array
+
+# A packed array of 32 bit integers
+ids = array.array("i", [1, 73, 9457, 62])
+
+# Simple usage.  You would normally use joins, IN etc
+print(
+    "ordered integers",
+    connection.execute(
+        "SELECT value FROM CARRAY(?) ORDER BY value",
+        (apsw.carray(ids),),
+    ).get
+)
+
+# Using strings and blobs is just as easy
+strings = ("zero", "one", "two", "three", "four")
+blobs = (b"\xf3\x72\x94", b"\xf4\x8f\xbf", b"\xf7\xbf\xbf\xbf")
+
+print(
+    "ordered strings",
+    connection.execute(
+        "SELECT value FROM CARRAY(?) ORDER BY value",
+        (apsw.carray(strings),),
+    ).get
+)
+
+# We'll use the start parameter to skip entries
+print(
+    "ordered strings start=2",
+    connection.execute(
+        "SELECT value FROM CARRAY(?) ORDER BY value",
+        (apsw.carray(strings, start=2),),
+    ).get
+)
+
+# Find the longest blob
+print(
+    "longest blob",
+    connection.execute(
+        "SELECT value FROM CARRAY(?) ORDER BY LENGTH(value) DESC LIMIT 1",
+        (apsw.carray(blobs),),
+    ).get
+)
+
 
 ### cleanup:  Cleanup
 # As a general rule you do not need to do any cleanup.  Standard

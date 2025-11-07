@@ -404,8 +404,8 @@ def extract_version(filename: str, source: str):
     global ucd_version
     if filename == "emoji-data.txt":
         for line in source.splitlines():
-            if line.startswith("# Used with Emoji Version "):
-                mo = re.match(r".*Version (?P<version>[^\s]+)\s.*", line)
+            mo = re.match(r"# Version: (?P<version>[^\s]+)\s*", line)
+            if mo:
                 break
         else:
             raise ValueError("No matching version line found")
@@ -979,6 +979,21 @@ def line_resolve_classes(codepoint: int, cat: str | tuple[str]):
                 newcat.append(c if c != match else replacement)
             cat = tuple(newcat)
 
+    def add_cat(c: str):
+        nonlocal cat
+        if isinstance(cat, tuple):
+            cat = tuple(list(cat) + [c])
+        else:
+            cat = (cat, c)
+
+    if codepoint_to_category[codepoint] == "Cn":
+        # we only add XX if not already a LB category
+        # 1fffd is ID | Cn while 1f8ff is Cn only
+        # both are ExtendedPictographic so we have to ignore
+        # that.
+        if cat == "Extended_Pictographic":
+            add_cat("XX")
+
     if any(has_cat(c) for c in ("BK", "CR", "LF", "NL")):
         line_hard_breaks.append(codepoint)
 
@@ -993,29 +1008,21 @@ def line_resolve_classes(codepoint: int, cat: str | tuple[str]):
             replace_cat("SA", "AL")
     replace_cat("CJ", "NS")
 
-    def add_cat(c: str):
-        nonlocal cat
-        if isinstance(cat, tuple):
-            cat = tuple(list(cat) + [c])
-        else:
-            cat = (cat, c)
 
     if codepoint_to_category[codepoint] == "Pi":
         add_cat("Punctuation_Initial_Quote")
     if codepoint_to_category[codepoint] == "Pf":
         add_cat("Punctuation_Final_Quote")
-    if codepoint_to_category[codepoint] == "Cn":
-        add_cat("Other_NotAssigned")
 
     if codepoint in east_asian_widths_FWH:
         add_cat("EastAsianWidth_FWH")
 
+    if codepoint_to_category[codepoint] == "Cn":
+        add_cat("OtherNotAssigned")
+
     # DOTTED CIRCLE U+25CC is in the rules
     if codepoint == 0x25CC:
         add_cat("DOTTED_CIRCLE")
-    # as well as HYPHEN U+2010
-    if codepoint == 0x2010:
-        add_cat("HYPHEN")
 
     return cat
 
