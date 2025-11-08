@@ -1,5 +1,5 @@
 [project]
-name = "apsw-sqlite3mc"
+name = "apsw_sqlite3mc"
 dynamic = ["version", "urls", "classifiers", "keywords", "authors", "license", "requires-python", "readme", "description"]
 
 [build-system]
