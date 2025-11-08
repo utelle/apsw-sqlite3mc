@@ -1017,7 +1017,7 @@ depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c" and "unicode"
 
 if __name__ == '__main__':
     setup(
-        name="apsw-sqlite3mc",
+        name="apsw_sqlite3mc",
         version=version,
         python_requires=">=3.9",
         description="SQLite3 Multiple Ciphers combined with Another Python SQLite Wrapper",
