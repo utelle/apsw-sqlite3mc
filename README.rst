@@ -12,7 +12,7 @@ This project packages 3 things together
 
 `APSW <https://rogerbinns.github.io/apsw/>`__
 
-  Another Python SQLite wrapper, providing complete access to SQLite3
+  **A**\ nother **P**\ ython **S**\ QLite **W**\ rapper, providing complete access to SQLite3
   from Python.
 
 `SQLite 3 <https://www.sqlite.org/>`__
@@ -59,7 +59,7 @@ Setting the key on a new database is the only change needed to your code.
 
   >>> import apsw
   >>> print(apsw.mc_version)
-  SQLite3 Multiple Ciphers 2.2.5
+  SQLite3 Multiple Ciphers 2.2.6
   >>> con = apsw.Connection("database.sqlite3")
   >>> con.pragma("key", "my secret passphrase")
   ok

@@ -1,8 +1,8 @@
 
-SQLITEVERSION=3.51.0
+SQLITEVERSION=3.51.1
 APSWSUFFIX=.0
 
-RELEASEDATE="6 November 2025"
+RELEASEDATE="28 November 2025"
 
 VERSION=$(SQLITEVERSION)$(APSWSUFFIX)
 VERDIR=apsw-$(VERSION)
@@ -170,6 +170,11 @@ stubtest: ## Verifies type annotations with mypy
 	-env PYTHONPATH=. $(PYTHON) -m mypy --allow-redefinition examples/fts.py
 	-env PYTHONPATH=. $(PYTHON) -m mypy --allow-redefinition examples/session.py
 
+venv: ## Removes current venv and makes a new one
+	-rm -rf .venv
+	$(PYTHON) -m venv .venv
+	$(MAKE) dev-depends doc-depends PYTHON=.venv/bin/python
+
 # set this to a commit id to grab that instead
 FOSSIL_URL="https://sqlite.org/src/tarball/sqlite.tar.gz"
 fossil: ## Grabs latest trunk from SQLite source control, extracts and builds in sqlite3 directory
@@ -210,8 +215,6 @@ compile-win:  ## Builds and tests against all the Python versions on Windows
 	$(MAKE) compile-win-one PYTHON=c:/python311-32/python
 	$(MAKE) compile-win-one PYTHON=c:/python310-32/python
 	$(MAKE) compile-win-one PYTHON=c:/python310/python
-	$(MAKE) compile-win-one PYTHON=c:/python39-32/python
-	$(MAKE) compile-win-one PYTHON=c:/python39/python
 
 # I did try to make this use venv but then the pip inside the venv and
 # other packages were skipped due to metadata issues

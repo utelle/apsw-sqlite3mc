@@ -1010,6 +1010,20 @@ class APSW(unittest.TestCase):
         # incomplete execution across executemany
         c.executemany("select * from foo; select ?", ((1,), (2,)))  # we don't read
         self.assertRaises(apsw.IncompleteExecutionError, c.executemany, "begin", (1, 2))
+        # this gets more complicated - if executemany doesn't consume the iterable
+        # and another execute is started, we also consider that incomplete
+        c.executemany("select ?", ((i,) for i in range(10)))
+        self.assertRaisesRegex(
+            apsw.IncompleteExecutionError, ".*executemany were not fully consumed.*", c.execute, "select 3"
+        )
+        c.executemany("select ?", ((i,) for i in range(10)))
+        self.assertRaisesRegex(
+            apsw.IncompleteExecutionError,
+            ".*executemany were not fully consumed.*",
+            c.executemany,
+            "select ?",
+            ((i,) for i in range(10)),
+        )
 
         # set type (pysqlite error with this)
         c.execute("create table xxset(x,y,z)")
@@ -5984,6 +5998,7 @@ class APSW(unittest.TestCase):
                     "get_description",
                     "get_description_full",
                     "getdescription_dbapi",
+                    "bool",
                 ),
                 "req": {
                     "closed": "CHECK_CURSOR_CLOSED",
@@ -6008,6 +6023,7 @@ class APSW(unittest.TestCase):
                     "get_cursor_factory",
                     "set_cursor_factory",
                     "tp_str",
+                    "bool",
                 ),
                 "req": {
                     "closed": "CHECK_CLOSED",
@@ -6023,6 +6039,7 @@ class APSW(unittest.TestCase):
                     "get_change_patch_set_stream",
                     "dealloc",
                     "tp_traverse",
+                    "bool",
                 },
                 "req": {"closed": "CHECK_SESSION_CLOSED"},
                 "order": ("closed",),
@@ -6036,22 +6053,22 @@ class APSW(unittest.TestCase):
                 "order": ("scope",),
             },
             "APSWChangesetBuilder": {
-                "skip": {"dealloc", "close_internal", "close", "init", "tp_traverse"},
+                "skip": {"dealloc", "close_internal", "close", "init", "tp_traverse", "bool"},
                 "req": {"closed": "CHECK_BUILDER_CLOSED"},
                 "order": ("closed",),
             },
             "APSWRebaser": {
-                "skip": {"dealloc", "init"},
+                "skip": {"dealloc", "init", "bool", "close"},
                 "req": {"closed": "CHECK_REBASER_CLOSED"},
                 "order": ("closed",),
             },
             "APSWBlob": {
-                "skip": ("dealloc", "init", "close", "close_internal", "tp_str"),
+                "skip": ("dealloc", "init", "close", "close_internal", "tp_str", "bool"),
                 "req": {"closed": "CHECK_BLOB_CLOSED"},
                 "order": ("use", "closed"),
             },
             "APSWBackup": {
-                "skip": ("dealloc", "init", "close_internal", "get_remaining", "get_page_count", "tp_str"),
+                "skip": ("dealloc", "init", "close_internal", "get_remaining", "get_page_count", "tp_str", "bool"),
                 "req": {"closed": "CHECK_BACKUP_CLOSED"},
                 "order": ("use", "closed"),
             },
@@ -8687,6 +8704,31 @@ class APSW(unittest.TestCase):
                 list(c2.execute("select * from [%s] order by _ROWID_" % (table,))),
             )
 
+    def testBool(self):
+        "closable objects bool"
+        objects = [self.db]
+        self.db.execute("create table foo(bar); insert into foo(rowid, bar) values(73, x'aabbcc')")
+        objects.append(self.db.backup("temp", apsw.Connection(""), "main"))
+        objects.append(self.db.blob_open("main", "foo", "bar", 73, False))
+        objects.append(self.db.execute("select * from foo"))
+        if hasattr(apsw, "Session"):
+            objects.append(apsw.Session(self.db, "main"))
+            objects.append(apsw.ChangesetBuilder())
+            objects.append(apsw.Rebaser())
+
+        for obj in objects:
+            self.assertTrue(hasattr(obj, "__bool__"))
+            self.assertIs(obj.__bool__(), True)
+            self.assertIs(bool(obj), True)
+
+        objects.reverse()
+        for obj in objects:
+            obj.close()
+            self.assertIs(obj.__bool__(), False)
+            self.assertIs(bool(obj), False)
+
+
+
     def testBackup(self):
         "Verify hot backup functionality"
         # bad calls
@@ -8889,7 +8931,7 @@ class APSW(unittest.TestCase):
         if shellclass is None:
             shellclass = apsw.shell.Shell
 
-        fh = [open(TESTFILEPREFIX + "test-shell-" + t, "w+", encoding="utf8") for t in ("in", "out", "err")]
+        fh = [io.StringIO() for _ in ("in", "out", "err")]
         kwargs = {"stdin": fh[0], "stdout": fh[1], "stderr": fh[2]}
 
         def reset():
@@ -9687,8 +9729,10 @@ class APSW(unittest.TestCase):
         def chdir(path):
             before = os.getcwd()
             os.chdir(path)
-            yield
-            os.chdir(before)
+            try:
+                yield
+            finally:
+                os.chdir(before)
 
         def in_open_dbs(filename):
             count = 0
@@ -10844,9 +10888,8 @@ shell.write(shell.stdout, "hello world\\n")
 
     def testBestPractice(self) -> None:
         "apsw.bestpractice module"
-        if sys.version_info >= (3, 10):
-            with self.assertNoLogs():
-                apsw.log(apsw.SQLITE_NOMEM, "Zebras are striped")
+        with self.assertNoLogs():
+            apsw.log(apsw.SQLITE_NOMEM, "Zebras are striped")
         apsw.bestpractice.apply(apsw.bestpractice.recommended)
         with self.assertLogs() as l:
             apsw.log(apsw.SQLITE_NOMEM, "Zebras are striped")
@@ -10863,14 +10906,12 @@ shell.write(shell.stdout, "hello world\\n")
         con = apsw.Connection("")
         # now fail
         apsw.config(apsw.SQLITE_CONFIG_LOG, None)
-        if sys.version_info >= (3, 10):
-            with self.assertNoLogs():
-                self.assertRaises(apsw.SQLError, con.execute, dqs)
+        with self.assertNoLogs():
+            self.assertRaises(apsw.SQLError, con.execute, dqs)
 
         # can't optimize or WAL readonly databases
-        if sys.version_info >= (3, 10):
-            with self.assertNoLogs():
-                apsw.Connection(self.db.filename, flags=apsw.SQLITE_OPEN_READONLY)
+        with self.assertNoLogs():
+            apsw.Connection(self.db.filename, flags=apsw.SQLITE_OPEN_READONLY)
 
     def testExtTracing(self) -> None:
         "apsw.ext Tracing and Resource usage"
@@ -11224,13 +11265,9 @@ shell.write(shell.stdout, "hello world\\n")
             (stuff_stat_struct, apsw.ext.VTColumnAccess.By_Attr, None),
         ):
             if func is stuff_stat_struct:
-                if sys.version_info < (3, 10):
-                    a = apsw.ext.VTColumnAccess.By_Attr
-                    n = names = tuple(member for member in dir(next(func())) if member.startswith("st_"))
-                else:
-                    n, a = apsw.ext.get_column_names(next(func()))
-                    names = n
-                    self.assertEqual(names, os.stat(".").__match_args__)
+                n, a = apsw.ext.get_column_names(next(func()))
+                names = n
+                self.assertEqual(names, os.stat(".").__match_args__)
             else:
                 n, a = apsw.ext.get_column_names(next(func()))
             self.assertEqual(access, a)
@@ -12103,10 +12140,6 @@ def setup():
     memdb = apsw.Connection(":memory:")
     if not getattr(memdb, "enableloadextension", None):
         del APSW.testLoadExtension
-
-    # earlier py versions make recursion error fatal
-    if sys.version_info < (3, 10):
-        del APSW.testIssue425
 
     # Fork checker is becoming less usefull on newer Pythons because
     # multiprocessing really doesn't want you to use fork and does
