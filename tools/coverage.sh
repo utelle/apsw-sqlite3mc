@@ -5,7 +5,7 @@ set -e
 
 if [ $# = 0 ]
 then
-  args="-m apsw.tests"
+  args="-m apsw.tests -vf"
 else
   args="$@"
 fi
@@ -31,9 +31,15 @@ if [ ! -z "$USE_CLANG" ]
 then
   CC=clang
   LINKER="clang -shared"
-  GCOVWRAPPER="llvm-cov"
   PROFILE="-O2 --coverage"
 fi
+
+case "$CC" in
+  *clang*)
+    GCOVWRAPPER="llvm-cov"
+    ;;
+esac
+
 
 if [ -f sqlite3/sqlite_cfg.h ]
 then
@@ -42,16 +48,18 @@ fi
 
 export APSW_TEST_LARGE=t COVERAGE_RUN=true
 
+env CC=$CC $PYTHON setup.py build_test_extension
+
 OUR_CFLAGS=" -UNDEBUG  -DAPSW_FAULT_INJECT -DAPSW_DEBUG -DSQLITE_DEBUG"
 
 set -ex
-$CC $CFLAGS $MOREFLAGS $PROFILE $OUR_CFLAGS -DSQLITE_ENABLE_API_ARMOR -DAPSW_USE_SQLITE_AMALGAMATION -DSQLITE_ENABLE_FTS5  -DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_CARRAY -I$INCLUDEDIR -Isrc -Isqlite3 -I. -c src/apsw.c
+$CC $CFLAGS $MOREFLAGS $PROFILE $OUR_CFLAGS -DAPSW_USE_SQLITE_AMALGAMATION -DSQLITE_ENABLE_FTS5  -DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_CARRAY -DSQLITE_ENABLE_DBSTAT_VTAB -I$INCLUDEDIR -Isrc -Isqlite3 -I. -c src/apsw.c
 $LINKER $PROFILE apsw.o -o apsw/__init__$SOSUFFIX
 $CC $CFLAGS $MOREFLAGS $PROFILE $OUR_CFLAGS -I$INCLUDEDIR -Isrc -c src/unicode.c
 $LINKER $PROFILE unicode.o -o apsw/_unicode$SOSUFFIX
 set +ex
 echo "Running $PYTHON $args"
-env PYTHONPATH=. $PYTHON $args
+env PYTHONPATH=. $PYTHON $args && $PYTHON -m apsw.tests.async_meta
 res=$?
 [ $res -eq 0 -a -z "$NO_FI" ] && echo "Running $PYTHON tools/fi.py $FI_ARGS" && env PYTHONPATH=. $PYTHON tools/fi.py $FI_ARGS
 $GCOVWRAPPER gcov $GCOVOPTS *.gcno > /dev/null

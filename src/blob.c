@@ -82,10 +82,10 @@ ZeroBlobBind_len(PyObject *self_, PyObject *Py_UNUSED(unused))
 }
 
 static PyObject *
-ZeroBlobBind_tp_str(PyObject *self_)
+ZeroBlobBind_tp_repr(PyObject *self_)
 {
   ZeroBlobBind *self = (ZeroBlobBind *)self_;
-  return PyUnicode_FromFormat("<apsw.zeroblob object size %lld at %p>", self->blobsize, self);
+  return PyUnicode_FromFormat("<%s size %lld at %p>", Py_TypeName(self_), self->blobsize, self);
 }
 
 static PyMethodDef ZeroBlobBind_methods[]
@@ -99,7 +99,8 @@ static PyTypeObject ZeroBlobBindType = {
   .tp_methods = ZeroBlobBind_methods,
   .tp_init = ZeroBlobBind_init,
   .tp_new = PyType_GenericNew,
-  .tp_str = ZeroBlobBind_tp_str,
+  .tp_str = NULL,
+  .tp_repr = ZeroBlobBind_tp_repr,
 };
 
 /* BLOB TYPE */
@@ -194,17 +195,29 @@ APSWBlob_close_internal(APSWBlob *self, int force)
   return setexc;
 }
 
+static int
+APSWBlob_dealloc_mutex(void *self_)
+{
+  APSWBlob *self = (APSWBlob *)self_;
+  DBMUTEX_RETRY(self->connection, APSWBlob_dealloc_mutex);
+
+  APSWBlob_close_internal(self, 2);
+
+  Py_TpFree(self_);
+  return 0;
+}
+
 static void
 APSWBlob_dealloc(PyObject *self_)
 {
   APSWBlob *self = (APSWBlob *)self_;
   APSW_CLEAR_WEAKREFS;
 
-  if (self->connection)
-    DBMUTEX_FORCE(self->connection->dbmutex);
-  APSWBlob_close_internal(self, 2);
-
-  Py_TpFree(self_);
+  PY_ERR_FETCH(exc);
+  APSWBlob_dealloc_mutex(self);
+  if (PyErr_Occurred())
+    apsw_write_unraisable(NULL);
+  PY_ERR_RESTORE(exc);
 }
 
 /* If the blob is closed, we return the same error as normal python files */
@@ -263,6 +276,8 @@ APSWBlob_read(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs
     ARG_EPILOG(NULL, Blob_read_USAGE, );
   }
 
+  ASYNC_FASTCALL(self->connection, APSWBlob_read);
+
   if ((self->curoffset == sqlite3_blob_bytes(self->pBlob)) /* eof */
       || (length == 0))
     return PyBytes_FromStringAndSize(NULL, 0);
@@ -279,7 +294,7 @@ APSWBlob_read(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs
   if (!buffy)
     return NULL;
 
-  DBMUTEX_ENSURE(self->connection->dbmutex);
+  DBMUTEX_ENSURE(self->connection);
   thebuffer = PyBytes_AS_STRING(buffy);
   res = sqlite3_blob_read(self->pBlob, thebuffer, length, self->curoffset);
   SET_EXC(res, self->connection->db);
@@ -343,6 +358,8 @@ APSWBlob_read_into(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_
     ARG_EPILOG(NULL, Blob_read_into_USAGE, );
   }
 
+  ASYNC_FASTCALL(self->connection, APSWBlob_read_into);
+
   memset(&py3buffer, 0, sizeof(py3buffer));
   aswb = PyObject_GetBufferContiguous(buffer, &py3buffer, PyBUF_WRITABLE | PyBUF_SIMPLE);
   if (aswb)
@@ -371,7 +388,7 @@ APSWBlob_read_into(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_
     goto errorexit;
   }
 
-  DBMUTEX_ENSURE(self->connection->dbmutex);
+  DBMUTEX_ENSURE(self->connection);
   res = sqlite3_blob_read(self->pBlob, (char *)(py3buffer.buf) + offset, length, self->curoffset);
 
   MakeExistingException(); /* vfs errors could cause this */
@@ -490,6 +507,8 @@ APSWBlob_write(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_narg
     ARG_EPILOG(NULL, Blob_write_USAGE, );
   }
 
+  ASYNC_FASTCALL(self->connection, APSWBlob_write);
+
   if (0 != PyObject_GetBufferContiguous(data, &data_buffer, PyBUF_SIMPLE))
   {
     assert(PyErr_Occurred());
@@ -507,7 +526,7 @@ APSWBlob_write(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_narg
     goto finally;
   }
 
-  DBMUTEX_ENSURE(self->connection->dbmutex);
+  DBMUTEX_ENSURE(self->connection);
   res = sqlite3_blob_write(self->pBlob, data_buffer.buf, data_buffer.len, self->curoffset);
   SET_EXC(res, self->connection->db);
   sqlite3_mutex_leave(self->connection->dbmutex);
@@ -562,14 +581,41 @@ APSWBlob_close(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_narg
     ARG_OPTIONAL ARG_bool(force);
     ARG_EPILOG(NULL, Blob_close_USAGE, );
   }
+
   if (self->connection)
-    DBMUTEX_ENSURE(self->connection->dbmutex);
+  {
+    DBMUTEX_ENSURE_ANY_THREAD(self->connection);
+  }
+
   setexc = APSWBlob_close_internal(self, !!force);
 
   if (setexc)
     return NULL;
 
   Py_RETURN_NONE;
+}
+
+/** .. method:: aclose(force: bool = False) -> None
+
+  Async version of :meth:`close`
+
+*/
+static PyObject *
+APSWBlob_aclose(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+{
+  APSWBlob *self = (APSWBlob *)self_;
+  int force = 0;
+
+  {
+    Blob_aclose_CHECK;
+    ARG_PROLOG(1, Blob_aclose_KWNAMES);
+    ARG_OPTIONAL ARG_bool(force);
+    ARG_EPILOG(NULL, Blob_aclose_USAGE, );
+  }
+
+  if (self->connection)
+    ASYNC_FASTCALL(self->connection, APSWBlob_close);
+  return async_return_value(Py_None);
 }
 
 /** .. method:: __enter__() -> Blob
@@ -594,10 +640,13 @@ APSWBlob_enter(PyObject *self_, PyObject *Py_UNUSED(args))
   APSWBlob *self = (APSWBlob *)self_;
   CHECK_BLOB_CLOSED;
 
+  if (!IN_WORKER_THREAD(self->connection))
+    return error_sync_in_async_context();
+
   return Py_NewRef((PyObject *)self);
 }
 
-/** .. method:: __exit__(etype: Optional[type[BaseException]], evalue: Optional[BaseException], etraceback: Optional[types.TracebackType]) -> Optional[bool]
+/** .. method:: __exit__(etype: type[BaseException] | None, evalue: BaseException | None, etraceback: types.TracebackType | None) -> bool
 
   Implements context manager in conjunction with
   :meth:`~Blob.__enter__`.  Any exception that happened in the
@@ -605,20 +654,84 @@ APSWBlob_enter(PyObject *self_, PyObject *Py_UNUSED(args))
 */
 
 static PyObject *
-APSWBlob_exit(PyObject *self_, PyObject *Py_UNUSED(args))
+APSWBlob_exit(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
   APSWBlob *self = (APSWBlob *)self_;
   int setexc;
 
+  PyObject *etype, *evalue, *etraceback;
+
   CHECK_BLOB_CLOSED;
 
-  if (self->connection)
-    DBMUTEX_ENSURE(self->connection->dbmutex);
+  {
+    Blob_exit_CHECK;
+    ARG_PROLOG(3, Blob_exit_KWNAMES);
+    ARG_MANDATORY ARG_pyobject(etype);
+    ARG_MANDATORY ARG_pyobject(evalue);
+    ARG_MANDATORY ARG_pyobject(etraceback);
+    ARG_EPILOG(NULL, Blob_exit_USAGE, );
+  }
+
+  (void)etype;
+  (void)evalue;
+  (void)etraceback;
+
+  if (!IN_WORKER_THREAD(self->connection))
+    return error_sync_in_async_context();
+
+  DBMUTEX_ENSURE(self->connection);
+  /* note: this releases the mutex */
   setexc = APSWBlob_close_internal(self, 0);
   if (setexc)
     return NULL;
 
   Py_RETURN_FALSE;
+}
+
+/** .. method:: __aenter__() -> Self
+
+  Async context manager enter
+*/
+static PyObject *
+APSWBlob_aenter(PyObject *self_, PyObject *Py_UNUSED(unused))
+{
+  APSWBlob *self = (APSWBlob *)self_;
+
+  CHECK_BLOB_CLOSED;
+
+  if (IN_WORKER_THREAD(self->connection))
+    return error_async_in_sync_context();
+
+  return async_return_value(self_);
+}
+
+/** .. method:: __aexit__(etype: type[BaseException] | None, evalue: BaseException | None, etraceback: types.TracebackType | None) -> None
+
+  Async context manager exit
+*/
+static PyObject *
+APSWBlob_aexit(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+{
+  APSWBlob *self = (APSWBlob *)self_;
+
+  CHECK_BLOB_CLOSED;
+
+  PyObject *etype, *evalue, *etraceback;
+  {
+    Blob_aexit_CHECK;
+    ARG_PROLOG(3, Blob_aexit_KWNAMES);
+    ARG_MANDATORY ARG_pyobject(etype);
+    ARG_MANDATORY ARG_pyobject(evalue);
+    ARG_MANDATORY ARG_pyobject(etraceback);
+    ARG_EPILOG(NULL, Blob_aexit_USAGE, );
+  }
+
+  (void)etype;
+  (void)evalue;
+  (void)etraceback;
+
+  ASYNC_FASTCALL(self->connection, APSWBlob_exit);
+  return error_async_in_sync_context();
 }
 
 /** .. method:: reopen(rowid: int) -> None
@@ -644,10 +757,13 @@ APSWBlob_reopen(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nar
     ARG_MANDATORY ARG_int64(rowid);
     ARG_EPILOG(NULL, Blob_reopen_USAGE, );
   }
+
+  ASYNC_FASTCALL(self->connection, APSWBlob_reopen);
+
   /* no matter what happens we always reset current offset */
   self->curoffset = 0;
 
-  DBMUTEX_ENSURE(self->connection->dbmutex);
+  DBMUTEX_ENSURE(self->connection);
   res = sqlite3_blob_reopen(self->pBlob, rowid);
 
   MakeExistingException(); /* a vfs error could cause this */
@@ -662,11 +778,13 @@ APSWBlob_reopen(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nar
 }
 
 static PyObject *
-APSWBlob_tp_str(PyObject *self_)
+APSWBlob_tp_repr(PyObject *self_)
 {
   APSWBlob *self = (APSWBlob *)self_;
-  return PyUnicode_FromFormat("<apsw.Blob object from %S at %p>",
-                              self->connection ? (PyObject *)self->connection : apst.closed, self);
+  if (self->pBlob)
+    return PyUnicode_FromFormat("<%s pos %d / %d, of %S at %p>", Py_TypeName(self_), self->curoffset,
+                                sqlite3_blob_bytes(self->pBlob), (PyObject *)self->connection, self);
+  return PyUnicode_FromFormat("<%s (closed) at %p>", Py_TypeName(self_), self);
 }
 
 static int
@@ -685,8 +803,12 @@ static PyMethodDef APSWBlob_methods[] = {
   { "write", (PyCFunction)APSWBlob_write, METH_FASTCALL | METH_KEYWORDS, Blob_write_DOC },
   { "reopen", (PyCFunction)APSWBlob_reopen, METH_FASTCALL | METH_KEYWORDS, Blob_reopen_DOC },
   { "close", (PyCFunction)APSWBlob_close, METH_FASTCALL | METH_KEYWORDS, Blob_close_DOC },
+  { "aclose", (PyCFunction)APSWBlob_aclose, METH_FASTCALL | METH_KEYWORDS, Blob_aclose_DOC },
   { "__enter__", (PyCFunction)APSWBlob_enter, METH_NOARGS, Blob_enter_DOC },
-  { "__exit__", (PyCFunction)APSWBlob_exit, METH_VARARGS, Blob_exit_DOC },
+  { "__exit__", (PyCFunction)APSWBlob_exit, METH_FASTCALL | METH_KEYWORDS, Blob_exit_DOC },
+  { "__aenter__", (PyCFunction)APSWBlob_aenter, METH_NOARGS, Blob_aenter_DOC },
+  { "__aexit__", (PyCFunction)APSWBlob_aexit, METH_FASTCALL | METH_KEYWORDS, Blob_aexit_DOC },
+
 #ifndef APSW_OMIT_OLD_NAMES
   { Blob_read_into_OLDNAME, (PyCFunction)APSWBlob_read_into, METH_FASTCALL | METH_KEYWORDS, Blob_read_into_OLDDOC },
 #endif
@@ -706,5 +828,6 @@ static PyTypeObject APSWBlobType = {
   .tp_weaklistoffset = offsetof(APSWBlob, weakreflist),
   .tp_methods = APSWBlob_methods,
   .tp_as_number = &APSWBlob_as_number,
-  .tp_str = APSWBlob_tp_str,
+  .tp_str = NULL,
+  .tp_repr = APSWBlob_tp_repr,
 };

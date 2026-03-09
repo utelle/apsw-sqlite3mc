@@ -60,16 +60,17 @@ def dotest(pyver, logdir, pybin, pylib, workdir, sqlitever, debug, config, gil):
             cd {workdir} ;
             {pybin} -m venv venv
             venv/bin/python3 -m ensurepip || true ;
-            venv/bin/python3 -m pip install --upgrade --upgrade-strategy eager pip wheel setuptools ;
-            env LD_LIBRARY_PATH={pylib} venv/bin/python3 {pyflags} setup.py fetch \
-                --version={sqlitever} --all build_test_extension build_ext --inplace --force \
-                {extdebug} {build_ext_flags} test -v --locals;"""
+            venv/bin/python3 -m pip install --upgrade --upgrade-strategy eager pip wheel setuptools trio anyio;
+            venv/bin/python3 {pyflags} setup.py fetch --version={sqlitever} --all
+            venv/bin/python3 tools/vend.py compile -v
+            venv/bin/python3 {pyflags} setup.py build_test_extension build_ext --inplace --force \
+                {extdebug} {build_ext_flags} test -vf --locals"""
         + (
             """
             cp tools/setup-pypi.cfg setup.apsw ;
             venv/bin/python3 -m pip wheel -v . ;
             venv/bin/python3 -m pip install --no-index --force-reinstall --find-links=. apsw ;
-            venv/bin/python3 -m apsw.tests --locals"""
+            venv/bin/python3 -m apsw.tests -vf --locals"""
             if not debug
             else ""
         )
@@ -236,16 +237,16 @@ def cmp(a, b):
 
 # Default versions we support
 PYVERS = (
-    "3.15.0a3",
-    "3.14.2",
-    "3.13.11",
-    "3.12.12",
-    "3.11.14",
-    "3.10.19",
+    "3.15.0a6",
+    "3.14.3",
+    "3.13.12",
+    "3.12.13",
+    "3.11.15",
+    "3.10.20",
     "system",
 )
 
-SQLITEVERS = ("3.51.0", "3.51.1", "3.51.2",)
+SQLITEVERS = ("3.52.0", )
 
 BITS = (64, 32)
 

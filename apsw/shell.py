@@ -12,6 +12,7 @@ import codecs
 import contextlib
 import csv
 import dataclasses
+import importlib
 import inspect
 import io
 import json
@@ -24,13 +25,13 @@ import tempfile
 import textwrap
 import time
 import traceback
-from typing import Optional, TextIO
+from typing import TextIO
 import webbrowser
 
 import apsw
 import apsw.ext
 import apsw.fts5
-
+import apsw.sqlite_extra
 
 class Shell:
     """Implements a SQLite shell
@@ -2184,14 +2185,18 @@ Enter ".help" for instructions
         Note: Extension loading may not be enabled in the SQLite
         library version you are using.
 
-        By default sqlite3_extension_init is called in the library but
-        you can specify an alternate entry point.
+        By default sqlite3_extension_init and a name derived from the filename
+        is tried, or you can specify an alternate entry point.
 
         If you get an error about the extension not being found you
         may need to explicitly specify the directory.  For example if
         it is in the current directory then use:
 
-          .load ./extension.so
+          .load ./extension
+
+        :doc:`sqlite_extra <extra>` will also be searched for
+        extensions if the file is not found.  Use --list to see a
+        list available in this installation.
         """
         if len(cmd) < 1 or len(cmd) > 2:
             raise self.Error("load takes one or two parameters")
@@ -2200,7 +2205,23 @@ Enter ".help" for instructions
         except Exception:
             raise self.Error("Extension loading is not supported")
 
-        self.db.load_extension(*cmd)
+        try:
+            self.db.load_extension(*cmd)
+        except Exception:
+            if len(cmd) == 1:
+                if cmd[0] == "--list":
+                    extras = json.loads(importlib.resources.files(apsw).joinpath("sqlite_extra.json").read_text(encoding="utf8"))
+                    for name, extra in sorted(extras.items()):
+                        if extra["type"] == "extension" and apsw.sqlite_extra.has(name):
+                            self.write_value(name, fmt = str)
+                            self.write(self.stdout, " " * (17 - len(name)) + extra['description'] + "\n")
+                    return
+                try:
+                    apsw.sqlite_extra.load(self.db, cmd[0])
+                    return
+                except (apsw.ExtensionLoadingError, LookupError, apsw.sqlite_extra.NotAvailable):
+                    pass
+            raise
 
     def log_handler(self, code, message):
         "Called with SQLite log messages when logging is ON"

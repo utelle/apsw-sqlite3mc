@@ -4,23 +4,28 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import sys
 import shlex
 import glob
 import re
+import sysconfig
 import time
 import zipfile
 import tarfile
 import subprocess
-import sysconfig
 import shutil
+import types
 import pathlib
 import contextlib
 from dataclasses import dataclass
 
 from setuptools import setup, Extension, Command
 from setuptools.command import build_ext, sdist
+import setuptools._distutils.ccompiler as ccompiler
+from setuptools._distutils.sysconfig import customize_compiler
+
 
 try:
     # current setuptools has build
@@ -153,15 +158,17 @@ class run_tests(Command):
     # and forces verbose to 0)
     user_options = [
         ("show-tests", "v", "Show each test being run"),
+        ("fail-fast", "f", "Stop on first test failure"),
         ("locals", None, "Show local variables in test failure"),
     ]
 
     # see if you can find boolean_options documented anywhere
-    boolean_options = ["show-tests", "locals"]
+    boolean_options = ["show-tests", "fail-fast", "locals"]
 
     def initialize_options(self):
         self.show_tests = 0
         self.locals = False
+        self.fail_fast = False
 
     def finalize_options(self):
         pass
@@ -174,7 +181,7 @@ class run_tests(Command):
         suite = unittest.TestLoader().loadTestsFromModule(apsw.tests.__main__)
         # verbosity of zero doesn't print anything, one prints a dot
         # per test and two prints each test name
-        result = unittest.TextTestRunner(verbosity=self.show_tests + 1, tb_locals=self.locals).run(suite)
+        result = unittest.TextTestRunner(verbosity=self.show_tests + 1, failfast=self.fail_fast, tb_locals=self.locals).run(suite)
         if not result.wasSuccessful():
             sys.exit(1)
 
@@ -194,25 +201,21 @@ class build_test_extension(Command):
     def run(self):
         name = "testextension.sqlext"
 
-        def v(n):
-            return sysconfig.get_config_var(n)
+        try:
+            os.remove(name)
+        except FileNotFoundError:
+            pass
 
-        # unixy platforms have this, and is necessary to match the 32/64 bitness of Python itself
-        if v("CC"):
-            cc = f"{ v('CC') } { v('CFLAGS') } { v('CCSHARED') } -Isqlite3 -c src/testextension.c"
-            ld = f"{ v('LDSHARED') } testextension.o -o { name }"
+        compiler = ccompiler.new_compiler(verbose=True)
+        customize_compiler(compiler)
 
-            for cmd in cc, ld:
-                print(cmd)
-                subprocess.run(cmd, shell=True, check=True)
-        else:
-            # windows mostly
-            compiler = distutils.ccompiler.new_compiler(verbose=True)
-            compiler.add_include_dir("sqlite3")
-            compiler.add_include_dir(".")
-            preargs = ["/Gd"] if "msvc" in str(compiler.__class__).lower() else ["-fPIC"]
-            objs = compiler.compile(["src/testextension.c"], extra_preargs=preargs)
-            compiler.link_shared_object(objs, name)
+        compiler.add_include_dir("sqlite3")
+
+        output_dir = "build/testextension"
+        compiler.mkpath(output_dir)
+        objs = compiler.compile(["src/testextension.c"], output_dir=output_dir)
+        compiler.link_shared_object(objs, name, output_dir=output_dir)
+        compiler.move_file(f"{output_dir}/{name}", ".")
 
 
 # deal with various python version compatibility issues with how
@@ -229,103 +232,118 @@ def fixupcode(code):
     return code
 
 
-fetch_parts = []
-
-
 class fetch(Command):
-    description = "Automatically downloads SQLite and components"
+    description = "Automatically downloads SQLite and components into sqlite3/ directory"
     user_options = [
-        ("version=", None, f"Which version of SQLite/components to get (default { sqliteversion(version) })"),
+        ("version=", None, f"Which version of SQLite/components to get (default {sqliteversion(version)})"),
         ("missing-checksum-ok", None, "Continue on a missing checksum (default abort)"),
-        ("sqlite", None, "Download SQLite amalgamation"),
-        ("all", None, "Download all downloadable components"),
+        ("sqlite", None, "Download SQLite amalgamation (default True)"),
+        ("all", None, "Download all SQLite components (extensions and tools)"),
     ]
-    fetch_options = ["sqlite"]
-    boolean_options = fetch_options + ["all", "missing-checksum-ok"]
+    boolean_options = ["all", "sqlite", "missing-checksum-ok"]
 
     def initialize_options(self):
         self.version = None
-        self.sqlite = False
+        self.sqlite = True
         self.all = False
         self.missing_checksum_ok = False
 
     def finalize_options(self):
-        global fetch_parts
-        if self.version in ("self", None):
+        if self.version is None:
             self.version = sqliteversion(version)
-        if self.all:
-            for i in self.fetch_options:
-                setattr(self, i, True)
-        for i in self.fetch_options:
-            fetch_parts.append(i)
+
+    def extract_entry(self, contents: bytes, name: str, modtime: float, perm: int = 0, replace: str = "sqlite3") -> str:
+        name = os.path.normpath(name)
+        if name.startswith(os.pathsep) or ":" in name:
+            raise Exception(f"Refusing to deal with archive member {name}")
+        # replace top directory with "sqlite3"
+        out_name = pathlib.Path(pathlib.Path(replace), *pathlib.Path(name).parts[1:])
+
+        out_name.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(out_name, "wb") as f:
+            f.write(contents)
+
+        os.utime(out_name, (modtime, modtime))
+        if perm:
+            os.chmod(out_name, perm)
 
     def run(self):
-        # work out the version
-        if self.version == "latest":
-            write("  Getting download page to work out latest SQLite version")
-            page = self.download("https://sqlite.org/download.html", text=True, checksum=False)
-            match = re.search(r"sqlite-amalgamation-3([0-9][0-9])([0-9][0-9])([0-9][0-9])\.zip", page)
-            if match:
-                self.version = "3.%d.%d.%d" % tuple([int(match.group(n)) for n in range(1, 4)])
-                assert self.version.endswith(".0")  # sqlite doesn't use last component so we do now
-                self.version = sqliteversion(self.version)
-            else:
-                write("Unable to determine latest SQLite version.  Use --version=VERSION", sys.stderr)
-                write("to set version - eg setup.py fetch --version=3.6.18", sys.stderr)
-                sys.exit(17)
-            write("    Version is " + self.version)
-        # now get each selected component
-        downloaded = 0
-
         v = [int(x) for x in self.version.split(".")]
         assert len(v) == 3
         v.append(0)
-        self.webversion = "%d%02d%02d%02d" % tuple(v)
+        # how SQLite does the version number on the web page
+        web_version = "%d%02d%02d%02d" % tuple(v)
 
-        ## The amalgamation
-        if self.sqlite:
-            write("  Getting the SQLite amalgamation")
+        ## clear out existing directory
+        if os.path.exists("sqlite3"):
+            print("Clearing existing sqlite3/ directory")
+            shutil.rmtree("sqlite3")
 
-            AURL = "https://sqlite.org/sqlite-autoconf-%s.tar.gz" % (self.webversion,)
+        ## full source is a zip
+        if self.all:
+            write("  Getting the SQLite complete source")
+
+            AURL = "https://sqlite.org/sqlite-src-%s.zip" % (web_version,)
 
             AURL = fixup_download_url(AURL)
 
             data = self.download(AURL, checksum=True)
 
-            if os.path.exists("sqlite3"):
-                shutil.rmtree("sqlite3")
+            import zipfile
 
-            # if you get an exception here it is likely that you don't have the python zlib module
-            import zlib
+            with zipfile.ZipFile(data) as zipf:
+                for zi in zipf.infolist():
+                    if zi.is_dir():
+                        continue
+                    modtime = datetime.datetime(*zi.date_time).timestamp()
+                    self.extract_entry(zipf.read(zi), zi.filename, modtime)
 
-            tar = tarfile.open("nonexistentname to keep old python happy", "r", data)
-            configmember = None
-            kwargs = {}
-            if sys.version_info >= (3, 11, 4):
-                kwargs["filter"] = "tar"
-            for member in tar.getmembers():
-                tar.extract(member, **kwargs)
-                # find first file named configure
-                if not configmember and member.name.endswith("/configure"):
-                    configmember = member
-            tar.close()
-            # the directory name has changed a bit with each release so try to work out what it is
-            if not configmember:
-                write("Unable to determine directory it extracted to.", dest=sys.stderr)
-                sys.exit(19)
-            dirname = configmember.name.split("/")[0]
-            os.rename(dirname, "sqlite3")
+            write("  Getting the experiment vec1 extension")
+
+            AURL = "https://sqlite.org/vec1/zip/vec1-20260306155250-d070184523.zip"
+
+            data = self.download(AURL, checksum=True)
+
+            with zipfile.ZipFile(data) as zipf:
+                for zi in zipf.infolist():
+                    if zi.is_dir():
+                        continue
+                    modtime = datetime.datetime(*zi.date_time).timestamp()
+                    self.extract_entry(zipf.read(zi), zi.filename, modtime, replace="sqlite3/vec1")
+
+        ## The amalgamation is a .tar.gz
+        if self.sqlite:
+            write("  Getting the SQLite amalgamation")
+
+            AURL = "https://sqlite.org/sqlite-autoconf-%s.tar.gz" % (web_version,)
+
+            AURL = fixup_download_url(AURL)
+
+            data = self.download(AURL, checksum=True)
+
+            with tarfile.open(mode="r", fileobj=data) as tarf:
+                while (info := tarf.next()) is not None:
+                    match info.type:
+                        case tarfile.DIRTYPE:
+                            continue
+                        case tarfile.REGTYPE:
+                            pass
+                        case _:
+                            raise Exception(f"Unexpected type in {info=}")
+                    assert info.mode & 0o777 == info.mode
+                    self.extract_entry(tarf.extractfile(info).read(), info.name, info.mtime, info.mode)
+
             if sys.platform != "win32":
                 write("    Running configure to work out SQLite compilation flags")
-                subprocess.check_call(["./configure"], cwd="sqlite3")
-            downloaded += 1
-            patch_amalgamation()
+                env = os.environ.copy()
+                for v in "CC", "CFLAGS", "LDFLAGS":
+                    val = sysconfig.get_config_var(v)
+                    if val:
+                        env[v] = val
+                subprocess.check_call(["./configure"], cwd="sqlite3", env=env)
 
-        if not downloaded:
-            write("You didn't specify any components to fetch.  Use")
-            write("   setup.py fetch --help")
-            write("for a list and details")
-            raise ValueError("No components downloaded")
+            patch_amalgamation()
 
     # A function for verifying downloads
     def verifyurl(self, url, data):
@@ -453,6 +471,18 @@ class apsw_build(bparent):
             fc.finalize_options()
             fc.run()
         return bparent.finalize_options(self)
+
+    def run(self):
+        # this has to be done first ...
+        if all(pathlib.Path(f).exists() for f in ("sqlite3/tool/dbtotxt.c", "sqlite3/ext/misc/scrub.c")):
+            # Call into vend which we can't import so do something similar
+            vend = types.ModuleType("vend")
+            sys.modules["vend"] = vend
+            exec(compile(pathlib.Path("tools/vend.py").read_text("utf8"), "tools/vend.py", "exec"), vend.__dict__)
+            vend.do_build({"extension", "executable"}, True, False)
+
+        # ... because this fills in the manifest
+        super().run()
 
 
 def findamalgamation():
@@ -609,13 +639,13 @@ class apsw_build_ext(beparent):
         # sqlite3config.h used to be generated from configure output - now optional override file
         s3config = os.path.join(ext.include_dirs[0], "sqlite3config.h")
         if os.path.exists(s3config):
-            write(f"SQLite: Using your configuration { s3config }")
+            write(f"SQLite: Using your configuration {s3config}")
             ext.define_macros.append(("APSW_USE_SQLITE_CONFIG", "1"))
 
         # autosetup makes this file
         s3config = os.path.join(ext.include_dirs[0], "sqlite_cfg.h")
         if os.path.exists(s3config):
-            write(f"SQLite: Using configure generated { s3config }")
+            write(f"SQLite: Using configure generated {s3config}")
             ext.define_macros.append(("APSW_USE_SQLITE_CFG_H", "1"))
 
         # enables
@@ -716,7 +746,7 @@ class apsw_sdist(sparent):
     def initialize_options(self):
         sparent.initialize_options(self)
         self.add_doc = False
-        self.for_pypi = False
+        self.for_pypi = "APSW_FOR_PYPI" in os.environ
         self.use_defaults = False  # they are useless
 
         # Make sure the manifest is regenerated
@@ -724,7 +754,7 @@ class apsw_sdist(sparent):
 
     def run(self):
         cfg = "pypi" if self.for_pypi else "default"
-        shutil.copy2(f"tools/setup-{ cfg }.cfg", "setup.apsw")
+        shutil.copy2(f"tools/setup-{cfg}.cfg", "setup.apsw")
         v = sparent.run(self)
 
         if self.add_doc:
@@ -733,6 +763,7 @@ class apsw_sdist(sparent):
             for archive in self.get_archive_files():
                 add_doc(archive, self.distribution.get_fullname())
         return v
+
 
 class apsw_patch_amalgamation(Command):
     description = "Patches amalgamation"
@@ -749,6 +780,14 @@ class apsw_patch_amalgamation(Command):
     def run(self):
         if not patch_amalgamation():
             raise Exception("Failed to patch amalgamation")
+
+
+def get_amalgamation_version(filename):
+    for line in pathlib.Path(filename).read_text(encoding="utf8").splitlines():
+        if mo := re.match(r"^#define\s+SQLITE_VERSION_NUMBER\s+([0-9]{7})\s*$", line):
+            return int(mo.group(1))
+    raise Exception(f"Unable to find version in {filename=}")
+
 
 # amalgamation patching
 def patch_amalgamation() -> bool:
@@ -820,6 +859,10 @@ def patch_amalgamation() -> bool:
 
     source_file_name = pathlib.Path(__file__).parent / "sqlite3" / "sqlite3.c"
     patch_file_name = pathlib.Path(__file__).parent / "tools" / "carray.patch"
+
+    if get_amalgamation_version(source_file_name) >= 3052000:
+        print("No patches needed for this SQLite version")
+        return True
 
     try:
         source_file_lines = source_file_name.read_text(encoding="utf8").splitlines()
@@ -893,8 +936,8 @@ def set_config_from_system(outputfilename: str):
     os.makedirs(os.path.dirname(outputfilename), exist_ok=True)
     with open(outputfilename, "wt", encoding="utf8") as f:
         for c, v in sorted(configs.items()):
-            print(f"#undef  { c }", file=f)
-            print(f"#define { c } { v }", file=f)
+            print(f"#undef  {c}", file=f)
+            print(f"#define {c} {v}", file=f)
 
 
 def help_walker(arcdir):
@@ -1017,7 +1060,8 @@ def can_compiler_accept_flag(cmdline, flag):
 # We depend on every .[ch] file in src except unicode
 depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c" and "unicode" not in f]
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    os.makedirs("apsw/sqlite_extra_binaries", exist_ok=True)
     setup(
         name="apsw_sqlite3mc",
         version=version,
@@ -1036,6 +1080,10 @@ if __name__ == '__main__':
             "Programming Language :: Python :: 3",
             "Topic :: Database :: Front-Ends",
             "Topic :: Security :: Cryptography",
+            "Framework :: Trio",
+            "Framework :: AsyncIO",
+            "Framework :: AnyIO",
+            "Programming Language :: Python :: Implementation :: CPython",
         ],
         keywords=["database", "sqlite", "encryption"],
         license="OSI Approved",
@@ -1057,8 +1105,11 @@ if __name__ == '__main__':
                 undef_macros = [ "NDEBUG" ] if os.environ.get("UNICODE_DEBUG") else [],
             ),
         ],
-        packages=["apsw", "apsw.tests"],
-        package_data={"apsw": ["__init__.pyi", "py.typed", "fts_test_strings"]},
+        packages=["apsw", "apsw.tests", "apsw.sqlite_extra_binaries"],
+        package_data={
+            "apsw": ["__init__.pyi", "py.typed", "fts_test_strings", "sqlite_extra.json"],
+            "apsw.sqlite_extra_binaries": ["*"],
+        },
         cmdclass={
             "test": run_tests,
             "build_test_extension": build_test_extension,

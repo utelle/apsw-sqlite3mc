@@ -22,7 +22,8 @@ import traceback
 import types
 from dataclasses import dataclass, is_dataclass, make_dataclass
 from fractions import Fraction
-from typing import Any, Callable, Generator, Iterable, Iterator, Literal, Sequence, TextIO, Union
+from typing import Any, Literal, Protocol, TextIO, overload, TYPE_CHECKING
+from collections.abc import Callable, Iterator, AsyncIterator, AsyncIterable, Iterable, Sequence, Awaitable
 from types import NoneType
 
 import apsw
@@ -126,7 +127,7 @@ class DataClassRowFactory:
             return bytes
         if "REAL" in t or "FLOA" in t or "DOUB" in t:
             return float
-        return Union[float, int]
+        return float | int
 
     def __call__(self, cursor: apsw.Cursor, row: apsw.SQLiteValues) -> Any:
         """What the row tracer calls
@@ -215,7 +216,6 @@ class TypesConverterCursorFactory:
         def _rowtracer(self, cursor: apsw.Cursor, values: apsw.SQLiteValues) -> tuple[Any, ...]:
             return tuple(self.factory.convert_value(d[1], v) for d, v in zip(cursor.get_description(), values))
 
-
 class Function:
     """Provides a direct Python way to call a SQL level function
 
@@ -225,17 +225,22 @@ class Function:
         value = json_extract(some_json, '$.c[2].f')
 
     :attr:`~apsw.Cursor.get` is used to return the results
+
+    This works with both sync and async connections (await the
+    result).  It isn't currently possible to type annotate and
+    generate the documentation to accurately reflect that without one
+    of them having problems.
     """
     # This is tested in tests/jsonb.py because it was developed in
     # conjunction with jsonb
     def __init__(
         self,
-        connection: apsw.Connection,
+        connection: apsw.Connection | apsw.AsyncConnection,
         name: str,
         *,
-        convert_binding=None,
-        convert_jsonb=None,
-        exec_trace=None,
+        convert_binding: apsw.ConvertBinding | None = None,
+        convert_jsonb: apsw.ConvertJSONB | None = None,
+        exec_trace: apsw.ExecTracer | None = None,
     ):
         """
         :param connection: Connection to use
@@ -250,10 +255,20 @@ class Function:
         cursor.convert_jsonb = convert_jsonb
         cursor.exec_trace = exec_trace
         self.cursor = cursor
+        self.is_async = connection.is_async
 
-    def __call__(self, *args: apsw.SQLiteValue) -> apsw.SQLiteValue:
-        "Calls the function with zero or more parameters, returning the result"
-        return self.cursor.execute(f'SELECT "{self.name}"({",".join("?" * len(args))})', args).get
+    def __call__(self, *args: apsw.SQLiteValue) -> apsw.SQLiteValue | Awaitable[apsw.SQLiteValue]:
+        """Calls the function with zero or more parameters, returning the result
+
+        If using a sync connection then you get the direct result,
+        while an async connection requires awaiting the result.
+        """
+        if not self.is_async:
+            return self.cursor.execute(f'SELECT "{self.name}"({",".join("?" * len(args))})', args).get
+        return self.__call_async(*args)
+
+    async def __call_async(self, *args: apsw.SQLiteValue) -> Awaitable[apsw.SQLiteValue]:
+        return await (await self.cursor.execute(f'SELECT "{self.name}"({",".join("?" * len(args))})', args)).get
 
 
 def make_jsonb(tag: int, value: None | str | bytes | Any = None):
@@ -847,7 +862,7 @@ class Trace:
     def __init__(
         self,
         file: TextIO | None,
-        db: apsw.Connection,
+        db: apsw.Connection | apsw.AsyncConnection,
         *,
         trigger: bool = False,
         vtable: bool = False,
@@ -869,7 +884,7 @@ class Trace:
         text = text.strip()
         return text[: self.truncate] + "..." if len(text) > self.truncate else text
 
-    def __enter__(self):
+    def __enter_core(self):
         if not self.file:
             return self
 
@@ -879,21 +894,31 @@ class Trace:
         # interleaving of queries
         self.last_emitted = None
 
-        self.db.trace_v2(
+        yield self.db.trace_v2(
             apsw.SQLITE_TRACE_STMT | apsw.SQLITE_TRACE_ROW | apsw.SQLITE_TRACE_PROFILE, self._sqlite_trace, id=self
         )
 
         if self.updates:
             if hasattr(self.db, "preupdate_hook"):
-                self.db.preupdate_hook(self._preupdate, id=self)
+                yield self.db.preupdate_hook(self._preupdate, id=self)
             else:
                 self.updates = False
 
         if self.transaction:
-            self.db.set_commit_hook(self._commit, id=self)
-            self.db.set_rollback_hook(self._rollback, id=self)
+            yield self.db.set_commit_hook(self._commit, id=self)
+            yield self.db.set_rollback_hook(self._rollback, id=self)
             self.transaction_state: str | None = None
 
+        return self
+
+    def __enter__(self):
+        for v in self.__enter_core():
+            pass
+        return self
+
+    async def __aenter__(self):
+        for v in self.__enter_core():
+            await v
         return self
 
     def _commit(self):
@@ -1012,13 +1037,21 @@ class Trace:
 
             self.last_emitted = event["id"], event["sql"]
 
-    def __exit__(self, *_):
-        self.db.trace_v2(0, None, id=self)
+    def __exit_core(self):
+        yield self.db.trace_v2(0, None, id=self)
         if self.updates:
-            self.db.preupdate_hook(None, id=self)
+            yield self.db.preupdate_hook(None, id=self)
         if self.transaction:
-            self.db.set_commit_hook(None, id=self)
-            self.db.set_rollback_hook(None, id=self)
+            yield self.db.set_commit_hook(None, id=self)
+            yield self.db.set_rollback_hook(None, id=self)
+
+    def __exit__(self, *_):
+        for v in self.__exit_core():
+            pass
+
+    async def __aexit__(self, *_):
+        for v in self.__exit_core():
+            await v
 
 
 class ShowResourceUsage:
@@ -1041,7 +1074,7 @@ class ShowResourceUsage:
            Statistics from each SQL statement executed are added together.
     :param scope: Get :data:`thread <resource.RUSAGE_THREAD>` or
            :data:`process <resource.RUSAGE_SELF>` stats, or `None`.
-           Note that MacOS only supports process, and Windows doesn't support
+           Note that MacOS only provides process, and Windows doesn't support
            either.
     :param indent: Printed before each line of output
 
@@ -1059,7 +1092,7 @@ class ShowResourceUsage:
         self,
         file: TextIO | None,
         *,
-        db: apsw.Connection | None = None,
+        db: apsw.Connection | apsw.AsyncConnection | None = None,
         scope: Literal["thread"] | Literal["process"] | None = None,
         indent: str = "",
     ):
@@ -1075,7 +1108,7 @@ class ShowResourceUsage:
 
         _get_resource = resource.getrusage
         _get_resource_param = {
-            "thread": getattr("resource", "RUSAGE_THREAD", resource.RUSAGE_SELF),
+            "thread": getattr(resource, "RUSAGE_THREAD", resource.RUSAGE_SELF),
             "process": resource.RUSAGE_SELF,
         }
 
@@ -1091,9 +1124,28 @@ class ShowResourceUsage:
         if self.scope:
             self._usage = self._get_resource(self._get_resource_param[self.scope])
         if self.db:
-            self.db.trace_v2(apsw.SQLITE_TRACE_PROFILE, self._sqlite_trace, id=self)
-            self.stmt_status = {}
-            self.db_status = self.db_status_get()
+            self.db_enter()
+        return self
+
+    def db_enter(self):
+        ":meta private:"
+        self.db.trace_v2(apsw.SQLITE_TRACE_PROFILE, self._sqlite_trace, id=self)
+        self.stmt_status = {}
+        self.db_status = self.db_status_get()
+
+    def db_exit(self):
+        ":meta private:"
+        self.db.trace_v2(0, None, id=self)
+        return self.db_status_get()
+
+    async def __aenter__(self):
+        if not self.file:
+            return self
+        self._times = time.process_time(), time.monotonic()
+        if self.scope:
+            self._usage = self._get_resource(self._get_resource_param[self.scope])
+        if self.db:
+            return await self.db.async_run(self.db_enter)
         return self
 
     def _sqlite_trace(self, v):
@@ -1118,20 +1170,37 @@ class ShowResourceUsage:
             "SQLITE_DBSTATUS_TEMPBUF_SPILL": self.db.status(apsw.SQLITE_DBSTATUS_TEMPBUF_SPILL)[0],
         }
 
+    async def __aexit__(self, *_):
+        if not self.file:
+            return
+
+        times = time.process_time(), time.monotonic()
+        usage = self._get_resource(self._get_resource_param[self.scope]) if self.scope else None
+        status_vals = await self.db.async_run(self.db_exit) if self.db else None
+
+        self.format_output(times, usage, status_vals)
+
     def __exit__(self, *_) -> None:
         if not self.file:
             return
 
+        times = time.process_time(), time.monotonic()
+        usage = self._get_resource(self._get_resource_param[self.scope]) if self.scope else None
+        status_vals = self.db_exit() if self.db else None
+
+        self.format_output(times, usage, status_vals)
+
+    def format_output(self, times, usage, status_vals):
+        ":meta private:"
+
         vals: list[tuple[str, int | float]] = []
 
-        times = time.process_time(), time.monotonic()
         if times[0] - self._times[0] >= 0.001:
             vals.append((self._descriptions["process_time"], times[0] - self._times[0]))
         if times[1] - self._times[1] >= 0.001:
             vals.append((self._descriptions["monotonic"], times[1] - self._times[1]))
 
         if self.scope:
-            usage = self._get_resource(self._get_resource_param[self.scope])
 
             for k in dir(usage):
                 if not k.startswith("ru_"):
@@ -1141,13 +1210,12 @@ class ShowResourceUsage:
                     vals.append((self._descriptions.get(k, k), delta))
 
         if self.db:
-            self.db.trace_v2(0, None, id=self)
             if self.stmt_status:
                 self.stmt_status.pop("SQLITE_STMTSTATUS_MEMUSED")
                 for k, v in self.stmt_status.items():
                     if v:
                         vals.append((self._descriptions[k], v))
-                for k, v in self.db_status_get().items():
+                for k, v in status_vals.items():
                     diff = v - self.db_status[k]
                     if diff:
                         vals.append((self._descriptions[k], diff))
@@ -1165,7 +1233,7 @@ class ShowResourceUsage:
                 print(self.indent, " " * (max_width - len(k)), k, " ", v, file=self.file, sep="")
 
     _descriptions = {
-        "process_time": "Total CPU consumption",
+        "process_time": "Process CPU consumption",
         "monotonic": "Wall clock",
         "SQLITE_STMTSTATUS_FULLSCAN_STEP": "SQLite full table scan",
         "SQLITE_STMTSTATUS_SORT": "SQLite sort operations",
@@ -1188,8 +1256,8 @@ class ShowResourceUsage:
         "SQLITE_DBSTATUS_CACHE_SPILL": "SQLite pager cache writes during transaction",
         "SQLITE_DBSTATUS_DEFERRED_FKS": "SQLite unresolved foreign keys",
         "SQLITE_DBSTATUS_TEMPBUF_SPILL": "SQLite temp spill from full memory to disk",
-        "ru_utime": "Time in user mode",
-        "ru_stime": "Time in system mode",
+        "ru_utime": "CPU time in user mode",
+        "ru_stime": "CPU time in system mode",
         "ru_maxrss": "Maximum resident set size",
         "ru_ixrss": "Shared memory size",
         "ru_idrss": "Unshared memory size",
@@ -1632,9 +1700,9 @@ class QueryLimitNoException(Exception):
 
 
 class query_limit:
-    """Use as a context manager to limit execution time and rows processed in the block
+    """Use as a context manager to limit execution time and rows produced in the block
 
-    When the total number of rows processed hits the row limit, or
+    When the total number of rows produced hits the row limit, or
     timeout seconds have elapsed an exception is raised to exit the
     block.
 
@@ -1647,7 +1715,7 @@ class query_limit:
             db.execute("...")
 
     :param db: Connection to monitor
-    :param row_limit: Maximum number of rows to process, across all
+    :param row_limit: Maximum number of rows to produce, across all
         queries.  :class:`None` (default) means no limit
     :param timeout: Maximum elapsed time in seconds.  :class:`None`
         (default) means no limit
@@ -1940,7 +2008,7 @@ def _format_table(
         def colour_wrap(text: str, kind: type | None, header: bool = False) -> str:
             return text
 
-    colwidths = [max(len(v) for v in c.splitlines()) for c in colnames]
+    colwidths = [(max(len(v) for v in c.splitlines()) if c else 0) for c in colnames]
     coltypes: list[set[type]] = [set() for _ in colnames]
 
     # type, measure and stringize each cell
@@ -2023,7 +2091,7 @@ def _format_table(
             break
 
         # this makes wider columns take more of the width blame
-        proportions = [w * 1.1 / total_width() for w in colwidths]
+        proportions = [w * 1.15 / total_width() for w in colwidths]
 
         excess = total_width() - text_width
 
@@ -2054,13 +2122,25 @@ def _format_table(
         )
 
     # break headers and cells into lines
-    def wrap(text: str, width: int) -> list[str]:
-        return list(apsw.unicode.text_wrap(text, width))
+    def wrap(text: str, width: int, justify: apsw.unicode.Justify, hyphen: str) -> list[str]:
+        return list(apsw.unicode.text_wrap(text, width, justify=justify, hyphen=hyphen)) or [" " * width]
 
-    colnames = [wrap(colnames[i], colwidths[i]) for i in range(len(colwidths))]  # type: ignore
+    # special formatting
+    formats = {
+        int: {"justify": apsw.unicode.Justify.RIGHT, "hyphen": ""},
+        float: {"justify": apsw.unicode.Justify.LEFT, "hyphen": ""},
+        "header": {"justify": apsw.unicode.Justify.CENTER, "hyphen": "-"},
+        "_": {"justify": apsw.unicode.Justify.LEFT, "hyphen": "-"},
+    }
+
+    colnames = [wrap(colnames[i], colwidths[i], **formats["header"]) for i in range(len(colwidths))]  # type: ignore
+
     for row in rows:
         for i, (text, t) in enumerate(row):  # type: ignore[misc]
-            row[i] = (wrap(text, colwidths[i]), t)  # type: ignore
+            row[i] = (
+                wrap(text, colwidths[i], **formats.get(t, formats["_"])),
+                t,
+            )  # type: ignore
 
     ## output
     # are any cells more than one line?
@@ -2084,38 +2164,33 @@ def _format_table(
                 line += chars[2]
         out_lines.append(line)
 
-    def do_row(row, sep: str, *, centre: bool = False, header: bool = False) -> None:
+    def do_row(row, sep: str, *, header: bool = False) -> None:
         for n in range(max(len(cell[0]) for cell in row)):
             line = sep
             for i, (cell, t) in enumerate(row):
-                text = cell[n] if n < len(cell) else ""
-                text = " " + text.rstrip() + " "
-                lt = apsw.unicode.text_width(text)
-                extra = " " * max(colwidths[i] + 2 - lt, 0)
-                if centre:
-                    lpad = extra[: len(extra) // 2]
-                    rpad = extra[len(extra) // 2 :]
-                else:
-                    lpad = ""
-                    rpad = extra
+                text = cell[n] if n < len(cell) else " " * colwidths[i]
+                # we do a space on each side
+                text = " " + text + " "
                 if header:
-                    text = colour_wrap(lpad + text + rpad, None, header=True)
+                    text = colour_wrap(text, None, header=True)
                 else:
-                    text = lpad + colour_wrap(text, t) + rpad
+                    text = colour_wrap(text, t)
                 line += text + sep
             out_lines.append(line)
 
-    do_bar("┌─┬┐" if use_unicode else "+-++")
-    do_row([(c, None) for c in colnames], "│" if use_unicode else "|", centre=True, header=True)
+    do_bar("╭─┬╮" if use_unicode else "+-++")
+    do_row([(c, None) for c in colnames], "│" if use_unicode else "|", header=True)
 
     # rows
+    which = 0
     if rows:
         for row in rows:
             if multiline:
-                do_bar("├─┼┤" if use_unicode else "+-++")
+                do_bar(["╞═╪╡", "├─┼┤"][which] if use_unicode else ["+=++", "+-++"][which])
+                which = 1
             do_row(row, "│" if use_unicode else "|")
 
-    do_bar("└─┴┘" if use_unicode else "+-++")
+    do_bar("╰─┴╯" if use_unicode else "+-++")
 
     return "\n".join(out_lines) + "\n"
 
@@ -2189,16 +2264,58 @@ def get_column_names(row: Any) -> tuple[Sequence[str], VTColumnAccess]:
         return tuple(f"column{x}" for x in range(len(row))), VTColumnAccess.By_Index
     raise TypeError(f"Can't figure out columns for {row}")
 
+class VirtualModuleCallable(Protocol):
+    """
+    What :func:`make_virtual_module` takes as the callable
+
+    """
+
+    columns: tuple[str]
+    "The columns names"
+    column_access: VTColumnAccess
+    "How to get values from each row"
+    primary_key: int | None = None
+    "Which column if any is a primary key"
+
+    def __call__(self, *args, **kwargs) -> Iterable | AsyncIterable:
+        "It can either an iterator over the values"
+        ...
+
+# ::TODO:: sphinx barfs when these overloads are present even though TYPE_CHECKING
+# is False.  Will need to automate commenting out the block while sphinx runs
+#
+#  if TYPE_CHECKING:
+#      @overload
+#      def make_virtual_module(
+#          db: apsw.Connection,
+#          name: str,
+#          callable: VirtualModuleCallable,
+#          *,
+#          eponymous: bool = True,
+#          eponymous_only: bool = False,
+#          repr_invalid: bool = False,
+#      ) -> None: ...
+#      @overload
+#      def make_virtual_module(
+#          db: apsw.AsyncConnection,
+#          name: str,
+#          callable: VirtualModuleCallable,
+#          *,
+#          eponymous: bool = True,
+#          eponymous_only: bool = False,
+#          repr_invalid: bool = False,
+#      ) -> Awaitable[None]: ...
+
 
 def make_virtual_module(
-    db: apsw.Connection,
+    db: apsw.Connection | apsw.AsyncConnection,
     name: str,
-    callable: Callable,
+    callable: VirtualModuleCallable,
     *,
     eponymous: bool = True,
     eponymous_only: bool = False,
     repr_invalid: bool = False,
-) -> None:
+) -> None | Awaitable[None]:
     """
     Registers a read-only virtual table module with *db* based on
     *callable*.  The *callable* must have an attribute named *columns*
@@ -2244,11 +2361,10 @@ def make_virtual_module(
       SELECT * from table_name(1) WHERE
             include_system=1;
 
-    :func:`iter` is called on *callable* with each iteration expected
-    to return the next row.  That means *callable* can return its data
-    all at once (eg a list of rows), or *yield* them one row at a
-    time.  The number of columns must always be the same, no matter
-    what the parameter values.
+    The callable can be sync or async.  It can return all the data in
+    one shot such as a list of rows, or it can ``yield`` one row at a
+    time.  The number of columns for each row must always be the same,
+    no matter what the parameter values.
 
     :param eponymous: Lets you use the *name* as a table name without
              having to create a virtual table
@@ -2258,6 +2374,14 @@ def make_virtual_module(
        :func:`repr`
 
     See the :ref:`example <example_virtual_tables>`
+
+    Async
+    +++++
+
+    If the db connection is in async mode, then you must ``await`` the
+    result of this function.  async callables can only be used when
+    the database is in async mode.  sync callables can be used in
+    either mode.
 
     Advanced
     ++++++++
@@ -2376,7 +2500,7 @@ def make_virtual_module(
             def __init__(self, module: Module, param_values: dict[str, apsw.SQLiteValue]):
                 self.module = module
                 self.param_values = param_values
-                self.iterating: Iterator[apsw.SQLiteValues] | None = None
+                self.iterating: Iterator[apsw.SQLiteValues] | AsyncIterator[apsw.SQLiteValues] | None = None
                 self.current_row: Any = None
                 self.columns = module.columns
                 self.repr_invalid = module.repr_invalid
@@ -2389,11 +2513,23 @@ def make_virtual_module(
                     setattr(self, "_Column_get", f)
                 else:
                     setattr(self, "Column", f)
+                self.is_async = False
 
             def Filter(self, idx_num: int, idx_str: str, args: tuple[apsw.SQLiteValue]) -> None:
                 params: dict[str, apsw.SQLiteValue] = self.param_values.copy()
                 params.update(zip(idx_str.split(","), args))
-                self.iterating = iter(self.module.callable(**params))
+                values = self.module.callable(**params)
+                self.is_async = False
+                if inspect.isasyncgen(values):
+                    self.iterating = aiter(values)
+                    self._impl_next = _get_anext
+                    self.is_async = True
+                elif inspect.iscoroutine(values):
+                    self.iterating = iter(apsw.async_run_coro(values))
+                    self._impl_next = next
+                else:
+                    self.iterating = iter(values)
+                    self._impl_next = next
                 # proactively advance so we can tell if eof
                 self.Next()
 
@@ -2406,7 +2542,10 @@ def make_virtual_module(
 
             def Close(self) -> None:
                 if self.iterating:
-                    if hasattr(self.iterating, "close"):
+                    if self.is_async:
+                        if (aclose := getattr(self.iterating, "aclose", None)) is not None:
+                            apsw.async_run_coro(aclose())
+                    elif hasattr(self.iterating, "close"):
                         self.iterating.close()
                     self.iterating = None
 
@@ -2452,8 +2591,8 @@ def make_virtual_module(
 
             def Next(self) -> None:
                 try:
-                    self.current_row = next(self.iterating)  # type: ignore[arg-type]
-                except StopIteration:
+                    self.current_row = self._impl_next(self.iterating)  # type: ignore[arg-type]
+                except (StopIteration, StopAsyncIteration):
                     if hasattr(self.iterating, "close"):
                         self.iterating.close()  # type: ignore[union-attr]
                     self.iterating = None
@@ -2471,9 +2610,7 @@ def make_virtual_module(
         repr_invalid,
     )
 
-    # unregister any existing first
-    db.create_module(name, None)
-    db.create_module(
+    return db.create_module(
         name,
         mod,  # type: ignore[arg-type]
         use_bestindex_object=True,
@@ -2482,6 +2619,11 @@ def make_virtual_module(
         read_only=True,
     )
 
+def _get_anext(aiterator: AsyncIterator[apsw.SQLiteValues]) -> apsw.SQLiteValues:
+    async def async_get_anext():
+        return await anext(aiterator)
+
+    return apsw.async_run_coro(async_get_anext())
 
 def generate_series_sqlite(
     start: apsw.SQLiteValue = None, stop: apsw.SQLiteValue = 0xFFFF_FFFF_FFFF_FFFF, step: apsw.SQLiteValue = 1

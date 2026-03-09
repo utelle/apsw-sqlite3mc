@@ -321,14 +321,23 @@ APSWSession_init(PyObject *self_, PyObject *args, PyObject *kwargs)
 
   CHECK_CLOSED(db, -1);
 
+  self->init_was_called = 1;
+
+  if (!IN_WORKER_THREAD(db))
+  {
+    PyErr_SetString(PyExc_TypeError, "The database is in async mode - use apsw.aio.make_session");
+    return -1;
+  }
+
+  DBMUTEX_ENSURE_RETURN(1, db, -1);
   int rc = sqlite3session_create(db->db, schema, &self->session);
+  sqlite3_mutex_leave(db->dbmutex);
+
   if (rc != SQLITE_OK)
   {
     SET_EXC(rc, NULL);
     return -1;
   }
-
-  self->init_was_called = 1;
 
   self->connection = db;
   Py_INCREF(self->connection);
@@ -356,8 +365,12 @@ error:
 static void
 APSWSession_close_internal(APSWSession *self)
 {
+  sqlite3_mutex *mutex = NULL;
+
   if (self->session)
   {
+    mutex = self->connection->dbmutex;
+    assert(sqlite3_mutex_held(mutex));
     sqlite3session_delete(self->session);
     self->session = NULL;
   }
@@ -365,16 +378,35 @@ APSWSession_close_internal(APSWSession *self)
   Py_CLEAR(self->table_filter);
 
   if (self->connection)
+  {
+    sqlite3_mutex_leave(mutex);
     Connection_remove_dependent(self->connection, (PyObject *)self);
+  }
   Py_CLEAR(self->connection);
+}
+
+static int
+APSWSession_dealloc_mutex(void *self_)
+{
+  APSWSession *self = (APSWSession *)self_;
+
+  DBMUTEX_RETRY(self->connection, APSWSession_dealloc_mutex);
+  APSWSession_close_internal(self);
+  Py_TpFree(self_);
+
+  return 0;
 }
 
 static void
 APSWSession_dealloc(PyObject *self_)
 {
   APSWSession *self = (APSWSession *)self_;
-  APSWSession_close_internal(self);
-  Py_TpFree(self_);
+
+  PY_ERR_FETCH(exc);
+  APSWSession_dealloc_mutex(self);
+  if (PyErr_Occurred())
+    apsw_write_unraisable(NULL);
+  PY_ERR_RESTORE(exc);
 }
 
 /** .. method:: close() -> None
@@ -386,16 +418,15 @@ APSWSession_dealloc(PyObject *self_)
   -* sqlite3session_delete
 */
 static PyObject *
-APSWSession_close(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWSession_close(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
   APSWSession *self = (APSWSession *)self_;
-  {
-    Session_close_CHECK;
-    ARG_PROLOG(0, Session_close_KWNAMES);
-    ARG_EPILOG(NULL, Session_close_USAGE, );
-  }
 
-  APSWSession_close_internal(self);
+  if (self->connection)
+  {
+    DBMUTEX_ENSURE_ANY_THREAD(self->connection);
+    APSWSession_close_internal(self);
+  }
   MakeExistingException();
 
   if (PyErr_Occurred())
@@ -404,7 +435,24 @@ APSWSession_close(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_n
   Py_RETURN_NONE;
 }
 
-/** .. method:: attach(name: Optional[str] = None) -> None
+/** .. method:: aclose() -> None
+
+  Async close
+*/
+static PyObject *
+APSWSession_aclose(PyObject *self_, PyObject *unused)
+{
+  APSWSession *self = (APSWSession *)self_;
+  if (self->connection && IN_WORKER_THREAD(self->connection))
+    return error_async_in_sync_context();
+
+  if (self->connection)
+    return do_async_binary((PyObject *)self->connection, APSWSession_close, self_, unused);
+
+  return async_return_value(Py_None);
+}
+
+/** .. method:: attach(name: str | None = None) -> None
 
  Attach to a specific table, or all tables if no name is provided.  The
  table does not need to exist at the time of the call.  You can call
@@ -429,7 +477,11 @@ APSWSession_attach(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_
     ARG_EPILOG(NULL, Session_attach_USAGE, );
   }
 
+  ASYNC_FASTCALL(self->connection, APSWSession_attach);
+
+  DBMUTEX_ENSURE(self->connection);
   int rc = sqlite3session_attach(self->session, name);
+  sqlite3_mutex_leave(self->connection->dbmutex);
   SET_EXC(rc, NULL);
   if (PyErr_Occurred())
     return NULL;
@@ -467,8 +519,12 @@ APSWSession_diff(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_na
     ARG_EPILOG(NULL, Session_diff_USAGE, );
   }
 
+  ASYNC_FASTCALL(self->connection, APSWSession_diff);
+
+  DBMUTEX_ENSURE(self->connection);
   char *pErrMsg = NULL;
   int rc = sqlite3session_diff(self->session, from_schema, table, &pErrMsg);
+  sqlite3_mutex_leave(self->connection->dbmutex);
 
   assert((rc == SQLITE_OK && !pErrMsg) || (rc != SQLITE_OK));
 
@@ -497,6 +553,7 @@ APSWSession_get_change_patch_set(APSWSession *self, int changeset)
   int nChangeset = 0;
   void *pChangeset = NULL;
 
+  assert(sqlite3_mutex_held(self->connection->dbmutex));
   int rc = changeset ? sqlite3session_changeset(self->session, &nChangeset, &pChangeset)
                      : sqlite3session_patchset(self->session, &nChangeset, &pChangeset);
 
@@ -528,7 +585,13 @@ APSWSession_changeset(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fa
     ARG_EPILOG(NULL, Session_changeset_USAGE, );
   }
 
-  return APSWSession_get_change_patch_set(self, 1);
+  ASYNC_FASTCALL(self->connection, APSWSession_changeset);
+
+  DBMUTEX_ENSURE(self->connection);
+  PyObject *retval = APSWSession_get_change_patch_set(self, 1);
+  sqlite3_mutex_leave(self->connection->dbmutex);
+
+  return retval;
 }
 
 /** .. method:: patchset() -> bytes
@@ -550,8 +613,12 @@ APSWSession_patchset(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fas
     ARG_PROLOG(0, Session_patchset_KWNAMES);
     ARG_EPILOG(NULL, Session_patchset_USAGE, );
   }
+  ASYNC_FASTCALL(self->connection, APSWSession_patchset);
 
-  return APSWSession_get_change_patch_set(self, 0);
+  DBMUTEX_ENSURE(self->connection);
+  PyObject *retval = APSWSession_get_change_patch_set(self, 0);
+  sqlite3_mutex_leave(self->connection->dbmutex);
+  return retval;
 }
 
 static int
@@ -610,6 +677,7 @@ APSWSession_xInput(void *pIn, void *pData, int *pnData)
 static PyObject *
 APSWSession_get_change_patch_set_stream(APSWSession *self, int changeset, PyObject *xOutput)
 {
+  assert(sqlite3_mutex_held(self->connection->dbmutex));
   int rc = changeset ? sqlite3session_changeset_strm(self->session, APSWSession_xOutput, xOutput)
                      : sqlite3session_patchset_strm(self->session, APSWSession_xOutput, xOutput);
   SET_EXC(rc, NULL);
@@ -637,8 +705,12 @@ APSWSession_changeset_stream(PyObject *self_, PyObject *const *fast_args, Py_ssi
     ARG_MANDATORY ARG_Callable(output);
     ARG_EPILOG(NULL, Session_changeset_stream_USAGE, );
   }
+  ASYNC_FASTCALL(self->connection, APSWSession_changeset_stream);
 
-  return APSWSession_get_change_patch_set_stream(self, 1, output);
+  DBMUTEX_ENSURE(self->connection);
+  PyObject *retval = APSWSession_get_change_patch_set_stream(self, 1, output);
+  sqlite3_mutex_leave(self->connection->dbmutex);
+  return retval;
 }
 
 /** .. method:: patchset_stream(output: SessionStreamOutput) -> None
@@ -660,7 +732,12 @@ APSWSession_patchset_stream(PyObject *self_, PyObject *const *fast_args, Py_ssiz
     ARG_EPILOG(NULL, Session_patchset_stream_USAGE, );
   }
 
-  return APSWSession_get_change_patch_set_stream(self, 0, output);
+  ASYNC_FASTCALL(self->connection, APSWSession_patchset_stream);
+
+  DBMUTEX_ENSURE(self->connection);
+  PyObject *retval = APSWSession_get_change_patch_set_stream(self, 0, output);
+  sqlite3_mutex_leave(self->connection->dbmutex);
+  return retval;
 }
 
 /** .. method:: table_filter(callback: Callable[[str], bool]) -> None
@@ -774,12 +851,17 @@ APSWSession_config(PyObject *self_, PyObject *args)
     -* sqlite3session_enable
 */
 static PyObject *
-APSWSession_get_enabled(PyObject *self_, void *Py_UNUSED(unused))
+APSWSession_get_enabled(PyObject *self_, void *unused)
 {
   APSWSession *self = (APSWSession *)self_;
   CHECK_SESSION_CLOSED(NULL);
 
+  ASYNC_ATTR_GET(self->connection, APSWSession_get_enabled, self_, unused);
+
+  DBMUTEX_ENSURE(self->connection);
   int res = sqlite3session_enable(self->session, -1);
+  sqlite3_mutex_leave(self->connection->dbmutex);
+
   if (res)
     Py_RETURN_TRUE;
   Py_RETURN_FALSE;
@@ -791,10 +873,18 @@ APSWSession_set_enabled(PyObject *self_, PyObject *value, void *Py_UNUSED(unused
   APSWSession *self = (APSWSession *)self_;
   CHECK_SESSION_CLOSED(-1);
 
+  if (!IN_WORKER_THREAD(self->connection))
+  {
+    error_sync_in_async_context();
+    return -1;
+  }
+
   int enabled = PyObject_IsTrueStrict(value);
   if (enabled == -1)
     return -1;
+  DBMUTEX_ENSURE_RETURN(1, self->connection, -1);
   sqlite3session_enable(self->session, enabled);
+  sqlite3_mutex_leave(self->connection->dbmutex);
   return 0;
 }
 
@@ -806,12 +896,16 @@ APSWSession_set_enabled(PyObject *self_, PyObject *value, void *Py_UNUSED(unused
     -* sqlite3session_indirect
 */
 static PyObject *
-APSWSession_get_indirect(PyObject *self_, void *Py_UNUSED(unused))
+APSWSession_get_indirect(PyObject *self_, void *unused)
 {
   APSWSession *self = (APSWSession *)self_;
   CHECK_SESSION_CLOSED(NULL);
 
+  ASYNC_ATTR_GET(self->connection, APSWSession_get_indirect, self_, unused);
+
+  DBMUTEX_ENSURE(self->connection);
   int res = sqlite3session_indirect(self->session, -1);
+  sqlite3_mutex_leave(self->connection->dbmutex);
   if (res)
     Py_RETURN_TRUE;
   Py_RETURN_FALSE;
@@ -826,7 +920,17 @@ APSWSession_set_indirect(PyObject *self_, PyObject *value, void *Py_UNUSED(unuse
   int enabled = PyObject_IsTrueStrict(value);
   if (enabled == -1)
     return -1;
+
+  if (!IN_WORKER_THREAD(self->connection))
+  {
+    error_sync_in_async_context();
+    return -1;
+  }
+
+  DBMUTEX_ENSURE_RETURN(1, self->connection, -1);
   sqlite3session_indirect(self->session, enabled);
+  sqlite3_mutex_leave(self->connection->dbmutex);
+
   return 0;
 }
 
@@ -838,12 +942,17 @@ APSWSession_set_indirect(PyObject *self_, PyObject *value, void *Py_UNUSED(unuse
     -* sqlite3session_isempty
 */
 static PyObject *
-APSWSession_get_empty(PyObject *self_, void *Py_UNUSED(unused))
+APSWSession_get_empty(PyObject *self_, void *unused)
 {
   APSWSession *self = (APSWSession *)self_;
   CHECK_SESSION_CLOSED(NULL);
 
+  ASYNC_ATTR_GET(self->connection, APSWSession_get_empty, self_, unused);
+
+  DBMUTEX_ENSURE(self->connection);
   int res = sqlite3session_isempty(self->session);
+  sqlite3_mutex_leave(self->connection->dbmutex);
+
   if (res)
     Py_RETURN_TRUE;
   Py_RETURN_FALSE;
@@ -902,6 +1011,19 @@ APSWSession_bool(PyObject *self_)
   return self->session ? 1 : 0;
 }
 
+static PyObject *
+APSWSession_tp_repr(PyObject *self_)
+{
+  APSWSession *self = (APSWSession *)self_;
+  if (self->connection)
+  {
+    assert(self->session);
+    return PyUnicode_FromFormat("<%s of %S at %p>", Py_TypeName(self_), self->connection, self_);
+  }
+  assert(!self->session);
+  return PyUnicode_FromFormat("<%s (closed) at %p>", Py_TypeName(self_), self_);
+}
+
 /** .. class:: TableChange
 
   Represents a `changed row
@@ -915,6 +1037,10 @@ APSWSession_bool(PyObject *self_)
   entry.  You will get :exc:`~apsw.InvalidContextError` if you try to
   access fields when out of scope.  This means you can't save
   TableChanges for later, and need to copy out any information you need.
+
+  When a conflict handler is :code:`SQLITE_CHANGESET_FOREIGN_KEY` then
+  only the :attr:`fk_conflicts` field has information, and all the rest
+  will be :code:`None`.
 
  */
 
@@ -960,7 +1086,7 @@ APSWTableChange_name(PyObject *self_, void *Py_UNUSED(unused))
   APSWTableChange *self = (APSWTableChange *)self_;
   CHECK_TABLE_SCOPE;
 
-  return PyUnicode_FromString(self->table_name);
+  return self->operation ? PyUnicode_FromString(self->table_name) : Py_NewRef(Py_None);
 }
 
 /** .. attribute:: column_count
@@ -974,7 +1100,7 @@ APSWTableChange_column_count(PyObject *self_, void *Py_UNUSED(unused))
   APSWTableChange *self = (APSWTableChange *)self_;
   CHECK_TABLE_SCOPE;
 
-  return PyLong_FromLong(self->table_column_count);
+  return self->operation ? PyLong_FromLong(self->table_column_count) : Py_NewRef(Py_None);
 }
 
 /** .. attribute:: opcode
@@ -991,7 +1117,7 @@ APSWTableChange_opcode(PyObject *self_, void *Py_UNUSED(unused))
   APSWTableChange *self = (APSWTableChange *)self_;
   CHECK_TABLE_SCOPE;
 
-  return PyLong_FromLong(self->operation);
+  return self->operation ? PyLong_FromLong(self->operation) : Py_NewRef(Py_None);
 }
 
 /** .. attribute:: op
@@ -1013,8 +1139,8 @@ APSWTableChange_op(PyObject *self_, void *Py_UNUSED(unused))
     return Py_NewRef(apst.DELETE);
   if (self->operation == SQLITE_UPDATE)
     return Py_NewRef(apst.UPDATE);
-  /* https://sqlite.org/forum/forumpost/09c94dfb08 */
-  return PyUnicode_FromFormat("Undocumented op %d", self->operation);
+
+  Py_RETURN_NONE;
 }
 
 /** .. attribute:: indirect
@@ -1028,6 +1154,9 @@ APSWTableChange_indirect(PyObject *self_, void *Py_UNUSED(unused))
 {
   APSWTableChange *self = (APSWTableChange *)self_;
   CHECK_TABLE_SCOPE;
+
+  if (!self->operation)
+    Py_RETURN_NONE;
   if (self->indirect)
     Py_RETURN_TRUE;
 
@@ -1048,6 +1177,9 @@ APSWTableChange_new(PyObject *self_, void *Py_UNUSED(unused))
 {
   APSWTableChange *self = (APSWTableChange *)self_;
   CHECK_TABLE_SCOPE;
+
+  if (!self->operation)
+    Py_RETURN_NONE;
 
   sqlite3_value *value, *misuse_check;
   if (SQLITE_MISUSE == sqlite3changeset_new(self->iter, 0, &misuse_check))
@@ -1098,6 +1230,9 @@ APSWTableChange_old(PyObject *self_, void *Py_UNUSED(unused))
   APSWTableChange *self = (APSWTableChange *)self_;
   CHECK_TABLE_SCOPE;
 
+  if (!self->operation)
+    Py_RETURN_NONE;
+
   sqlite3_value *value, *misuse_check;
   if (SQLITE_MISUSE == sqlite3changeset_old(self->iter, 0, &misuse_check))
     Py_RETURN_NONE;
@@ -1133,7 +1268,7 @@ error:
 }
 
 /** .. attribute:: conflict
-  :type: tuple[SQLiteValue, ...] | None
+  :type: SQLiteValues | None
 
   :class:`None` if not applicable (not in a conflict).  Otherwise a
   tuple of values for the conflicting row.
@@ -1145,6 +1280,10 @@ APSWTableChange_conflict(PyObject *self_, void *Py_UNUSED(unused))
 {
   APSWTableChange *self = (APSWTableChange *)self_;
   CHECK_TABLE_SCOPE;
+
+  if (!self->operation)
+    Py_RETURN_NONE;
+
   sqlite3_value *value;
   int res = sqlite3changeset_conflict(self->iter, 0, &value);
   if (res == SQLITE_MISUSE)
@@ -1222,6 +1361,9 @@ APSWTableChange_pk_columns(PyObject *self_, void *Py_UNUSED(unused))
   APSWTableChange *self = (APSWTableChange *)self_;
   CHECK_TABLE_SCOPE;
 
+  if (!self->operation)
+    Py_RETURN_NONE;
+
   unsigned char *abPK;
   int nCol;
 
@@ -1259,34 +1401,43 @@ error:
 }
 
 static PyObject *
-APSWTableChange_tp_str(PyObject *self_)
+APSWTableChange_tp_repr(PyObject *self_)
 {
   APSWTableChange *self = (APSWTableChange *)self_;
   if (!self->iter)
-    return PyUnicode_FromFormat("<apsw.TableChange out of scope, at %p>", self);
+    return PyUnicode_FromFormat("<%s out of scope, at %p>", Py_TypeName(self_), self);
 
-  PyObject *op = NULL, *old = NULL, *new_vals = NULL, *conflict = NULL, *pk_columns = NULL, *fk_conflicts = NULL;
+  PyObject *op = NULL, *old = NULL, *new_vals = NULL, *conflict = NULL, *pk_columns = NULL, *fk_conflicts = NULL,
+           *res = NULL;
 
-  op = APSWTableChange_op(self_, NULL);
-  if (op)
-    old = APSWTableChange_old(self_, NULL);
-  if (old)
-    new_vals = APSWTableChange_new(self_, NULL);
-  if (new_vals)
-    conflict = APSWTableChange_conflict(self_, NULL);
-  if (conflict)
-    pk_columns = APSWTableChange_pk_columns(self_, NULL);
-  if (pk_columns)
+  if (!self->operation)
+  {
     fk_conflicts = APSWTableChange_fk_conflicts(self_, NULL);
+    if (fk_conflicts)
+      res = PyUnicode_FromFormat("<%s SQLITE_CHANGESET_FOREIGN_KEY fk_conflicts=%S, at %p>", Py_TypeName(self_),
+                                 fk_conflicts, self);
+  }
+  else
+  {
+    op = APSWTableChange_op(self_, NULL);
+    if (op)
+      old = APSWTableChange_old(self_, NULL);
+    if (old)
+      new_vals = APSWTableChange_new(self_, NULL);
+    if (new_vals)
+      conflict = APSWTableChange_conflict(self_, NULL);
+    if (conflict)
+      pk_columns = APSWTableChange_pk_columns(self_, NULL);
+    if (pk_columns)
+      fk_conflicts = APSWTableChange_fk_conflicts(self_, NULL);
 
-  PyObject *res = NULL;
-
-  if (fk_conflicts)
-    res = PyUnicode_FromFormat("<apsw.TableChange name=\"%s\", column_count=%d, pk_columns=%S, operation=%U, "
-                               "indirect=%S, old=%S, new=%S, conflict=%S, fk_conflicts=%S, at %p>",
-                               self->table_name ? self->table_name : "(NULL)", self->table_column_count, pk_columns, op,
-                               (self->indirect) ? Py_True : Py_False, old, new_vals, conflict, fk_conflicts, self);
-
+    if (fk_conflicts)
+      res = PyUnicode_FromFormat("<%s name=\"%s\", column_count=%d, pk_columns=%S, operation=%U, "
+                                 "indirect=%S, old=%S, new=%S, conflict=%S, fk_conflicts=%S, at %p>",
+                                 Py_TypeName(self_), self->table_name ? self->table_name : "(NULL)",
+                                 self->table_column_count, pk_columns, op, (self->indirect) ? Py_True : Py_False, old,
+                                 new_vals, conflict, fk_conflicts, self);
+  }
   Py_XDECREF(op);
   Py_XDECREF(old);
   Py_XDECREF(new_vals);
@@ -1548,7 +1699,9 @@ error:
   return NULL;
 }
 
-/** .. method:: apply(changeset: ChangesetInput, db: Connection, *, filter: Optional[Callable[[str], bool]] = None, filter_change: Optional[Callable[[TableChange], bool]] = None, conflict: Optional[Callable[[int,TableChange], int]] = None, flags: int = 0, rebase: bool = False) -> bytes | None
+/** .. method:: apply(changeset: ChangesetInput, db: Connection | AsyncConnection, *, filter: Callable[[str], bool] | None = None, filter_change: Callable[[TableChange], bool] | None = None, conflict: Callable[[int,TableChange], int] | None = None, flags: int = 0, rebase: bool = False) -> bytes | None
+
+  |badge-async-dual|
 
   Applies a changeset to a database.
 
@@ -1731,7 +1884,7 @@ conflictReject(void *pCtx, int eConflict, sqlite3_changeset_iter *p)
 }
 
 static PyObject *
-APSWChangeset_apply(PyObject *Py_UNUSED(static_method), PyObject *const *fast_args, Py_ssize_t fast_nargs,
+APSWChangeset_apply(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs,
                     PyObject *fast_kwnames)
 {
   PyObject *changeset;
@@ -1762,6 +1915,9 @@ APSWChangeset_apply(PyObject *Py_UNUSED(static_method), PyObject *const *fast_ar
 
   CHECK_CLOSED(db, NULL);
 
+  ASYNC_FASTCALL(db, APSWChangeset_apply);
+
+  DBMUTEX_ENSURE(db);
   struct applyInfoContext aic = { .xFilter = filter, .xFilter_change = filter_change, .xConflict = conflict };
 
   int res = SQLITE_ERROR;
@@ -1783,20 +1939,22 @@ APSWChangeset_apply(PyObject *Py_UNUSED(static_method), PyObject *const *fast_ar
   else
   {
     Py_buffer changeset_buffer;
-    if (0 != PyObject_GetBufferContiguousBounded(changeset, &changeset_buffer, PyBUF_SIMPLE, INT32_MAX))
+    if (0 == PyObject_GetBufferContiguousBounded(changeset, &changeset_buffer, PyBUF_SIMPLE, INT32_MAX))
     {
-      assert(PyErr_Occurred());
-      return NULL;
+      res = filter ? sqlite3changeset_apply_v2(db->db, changeset_buffer.len, changeset_buffer.buf,
+                                               filter ? applyFilter : NULL, conflict ? applyConflict : conflictReject,
+                                               &aic, rebase ? &pRebase : NULL, rebase ? &nRebase : NULL, flags)
+                   : sqlite3changeset_apply_v3(db->db, changeset_buffer.len, changeset_buffer.buf,
+                                               filter_change ? applyFilterChange : NULL,
+                                               conflict ? applyConflict : conflictReject, &aic,
+                                               rebase ? &pRebase : NULL, rebase ? &nRebase : NULL, flags);
+      PyBuffer_Release(&changeset_buffer);
     }
-    res = filter ? sqlite3changeset_apply_v2(db->db, changeset_buffer.len, changeset_buffer.buf,
-                                             filter ? applyFilter : NULL, conflict ? applyConflict : conflictReject,
-                                             &aic, rebase ? &pRebase : NULL, rebase ? &nRebase : NULL, flags)
-                 : sqlite3changeset_apply_v3(db->db, changeset_buffer.len, changeset_buffer.buf,
-                                             filter_change ? applyFilterChange : NULL,
-                                             conflict ? applyConflict : conflictReject, &aic, rebase ? &pRebase : NULL,
-                                             rebase ? &nRebase : NULL, flags);
-    PyBuffer_Release(&changeset_buffer);
+    else
+      assert(PyErr_Occurred());
   }
+
+  sqlite3_mutex_leave(db->dbmutex);
 
   if (res != SQLITE_OK)
   {
@@ -1939,12 +2097,30 @@ APSWChangesetBuilder_close_internal(APSWChangesetBuilder *self)
   }
 }
 
+static int
+APSWChangesetBuilder_dealloc_mutex(void *self_)
+{
+  APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  DBMUTEX_RETRY(self->connection, APSWChangesetBuilder_dealloc_mutex);
+
+  sqlite3_mutex *mutex = (self->connection) ? self->connection->dbmutex : NULL;
+  APSWChangesetBuilder_close_internal(self);
+  sqlite3_mutex_leave(mutex);
+
+  Py_TpFree(self_);
+  return 0;
+}
+
 static void
 APSWChangesetBuilder_dealloc(PyObject *self_)
 {
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
-  APSWChangesetBuilder_close_internal(self);
-  Py_TpFree(self_);
+
+  PY_ERR_FETCH(exc);
+  APSWChangesetBuilder_dealloc_mutex(self);
+  if (PyErr_Occurred())
+    apsw_write_unraisable(NULL);
+  PY_ERR_RESTORE(exc);
 }
 
 /** .. method:: close() -> None
@@ -1954,14 +2130,9 @@ APSWChangesetBuilder_dealloc(PyObject *self_)
   -* sqlite3changegroup_delete
 */
 static PyObject *
-APSWChangesetBuilder_close(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWChangesetBuilder_close(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
-  {
-    ChangesetBuilder_close_CHECK;
-    ARG_PROLOG(0, ChangesetBuilder_close_KWNAMES);
-    ARG_EPILOG(NULL, ChangesetBuilder_close_USAGE, );
-  }
 
   APSWChangesetBuilder_close_internal(self);
   MakeExistingException();
@@ -2048,7 +2219,7 @@ APSWChangesetBuilder_add_change(PyObject *self_, PyObject *const *fast_args, Py_
   Py_RETURN_NONE;
 }
 
-/** .. method:: schema(db: Connection, schema: str) -> None
+/** .. method:: schema(db: Connection | AsyncConnection, schema: str) -> None
 
   Ensures the changesets comply with the tables in the database
 
@@ -2112,14 +2283,9 @@ APSWChangesetBuilder_schema(PyObject *self_, PyObject *const *fast_args, Py_ssiz
   -* sqlite3changegroup_output
  */
 static PyObject *
-APSWChangesetBuilder_output(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWChangesetBuilder_output(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
-  {
-    ChangesetBuilder_output_CHECK;
-    ARG_PROLOG(0, ChangesetBuilder_output_KWNAMES);
-    ARG_EPILOG(NULL, ChangesetBuilder_output_USAGE, );
-  }
 
   CHECK_BUILDER_CLOSED(NULL);
 
@@ -2344,14 +2510,10 @@ APSWRebaser_rebase_stream(PyObject *self_, PyObject *const *fast_args, Py_ssize_
   -* sqlite3rebaser_delete
  */
 static PyObject *
-APSWRebaser_close(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+APSWRebaser_close(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
   APSWRebaser *self = (APSWRebaser *)self_;
-  {
-    Rebaser_close_CHECK;
-    ARG_PROLOG(0, Rebaser_close_KWNAMES);
-    ARG_EPILOG(NULL, Rebaser_close_USAGE, );
-  }
+
   if(self->rebaser)
   {
     sqlite3rebaser_delete(self->rebaser);
@@ -2380,7 +2542,8 @@ APSWRebaser_dealloc(PyObject *self_)
 }
 
 static PyMethodDef APSWSession_methods[] = {
-  { "close", (PyCFunction)APSWSession_close, METH_FASTCALL | METH_KEYWORDS, Session_close_DOC },
+  { "close", (PyCFunction)APSWSession_close, METH_NOARGS, Session_close_DOC },
+  { "aclose", (PyCFunction)APSWSession_aclose, METH_NOARGS, Session_aclose_DOC },
   { "attach", (PyCFunction)APSWSession_attach, METH_FASTCALL | METH_KEYWORDS, Session_attach_DOC },
   { "diff", (PyCFunction)APSWSession_diff, METH_FASTCALL | METH_KEYWORDS, Session_diff_DOC },
   { "table_filter", (PyCFunction)APSWSession_table_filter, METH_FASTCALL | METH_KEYWORDS, Session_table_filter_DOC },
@@ -2420,6 +2583,8 @@ static PyTypeObject APSWSessionType = {
   .tp_as_number = &APSWSession_as_number,
   .tp_weaklistoffset = offsetof(APSWSession, weakreflist),
   .tp_traverse = APSWSession_tp_traverse,
+  .tp_str = NULL,
+  .tp_repr = APSWSession_tp_repr,
 };
 
 static PyMethodDef APSWChangeset_methods[] = {
@@ -2448,8 +2613,8 @@ static PyTypeObject APSWChangesetIteratorType = {
 };
 
 static PyMethodDef APSWChangesetBuilder_methods[] = {
-  { "close", (PyCFunction)APSWChangesetBuilder_close, METH_FASTCALL | METH_KEYWORDS, ChangesetBuilder_close_DOC },
-  { "output", (PyCFunction)APSWChangesetBuilder_output, METH_FASTCALL | METH_KEYWORDS, ChangesetBuilder_output_DOC },
+  { "close", (PyCFunction)APSWChangesetBuilder_close, METH_NOARGS, ChangesetBuilder_close_DOC },
+  { "output", (PyCFunction)APSWChangesetBuilder_output, METH_NOARGS, ChangesetBuilder_output_DOC },
   { "output_stream", (PyCFunction)APSWChangesetBuilder_output_stream, METH_FASTCALL | METH_KEYWORDS,
     ChangesetBuilder_output_stream_DOC },
   { "add", (PyCFunction)APSWChangesetBuilder_add, METH_FASTCALL | METH_KEYWORDS, ChangesetBuilder_add_DOC },
@@ -2496,14 +2661,15 @@ static PyTypeObject APSWTableChangeType = {
   .tp_getset = APSWTableChange_getset,
   .tp_doc = TableChange_class_DOC,
   .tp_dealloc = APSWTableChange_dealloc,
-  .tp_str = APSWTableChange_tp_str,
+  .tp_str = NULL,
+  .tp_repr = APSWTableChange_tp_repr,
 };
 
 static PyMethodDef APSWRebaser_methods[] = {
   { "configure", (PyCFunction)APSWRebaser_configure, METH_FASTCALL | METH_KEYWORDS, Rebaser_configure_DOC },
   { "rebase", (PyCFunction)APSWRebaser_rebase, METH_FASTCALL | METH_KEYWORDS, Rebaser_rebase_DOC },
   { "rebase_stream", (PyCFunction)APSWRebaser_rebase_stream, METH_FASTCALL | METH_KEYWORDS, Rebaser_rebase_stream_DOC },
-  { "close", (PyCFunction)APSWRebaser_close, METH_FASTCALL | METH_KEYWORDS, Rebaser_close_DOC },
+  { "close", (PyCFunction)APSWRebaser_close, METH_NOARGS, Rebaser_close_DOC },
   { 0 },
 };
 

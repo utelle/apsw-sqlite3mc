@@ -41,8 +41,12 @@ come back and copy those changes too until the backup is complete.
   {                                                                                                                    \
     if (!self->backup || (self->dest && !self->dest->db) || (self->source && !self->source->db))                       \
     {                                                                                                                  \
-      PyErr_Format(ExcConnectionClosed,                                                                                \
-                   "The backup is finished or the source or destination databases have been closed");                  \
+      if (!self->backup)                                                                                               \
+        PyErr_SetString(ExcConnectionClosed, "The backup is finished");                                                \
+      else if (self->dest && !self->dest->db)                                                                          \
+        PyErr_SetString(ExcConnectionClosed, "The backup destination database is closed");                             \
+      else                                                                                                             \
+        PyErr_SetString(ExcConnectionClosed, "The backup source database is closed");                                  \
       return e;                                                                                                        \
     }                                                                                                                  \
   } while (0)
@@ -117,22 +121,33 @@ APSWBackup_close_internal(APSWBackup *self, int force)
   return setexc;
 }
 
+static int
+APSWBackup_dealloc_mutex(void *self_)
+{
+  APSWBackup *self = (APSWBackup *)self_;
+  if (self->backup)
+  {
+    DBMUTEX_RETRY_2(self->source, self->dest, APSWBackup_dealloc_mutex);
+    APSWBackup_close_internal(self, 2);
+  }
+  Py_CLEAR(self->done);
+
+  Py_TpFree(self_);
+
+  return 0;
+}
+
 static void
 APSWBackup_dealloc(PyObject *self_)
 {
   APSWBackup *self = (APSWBackup *)self_;
   APSW_CLEAR_WEAKREFS;
 
-  if (self->backup)
-  {
-    DBMUTEX_FORCE(self->source->dbmutex);
-    DBMUTEX_FORCE(self->dest->dbmutex);
-
-    APSWBackup_close_internal(self, 2);
-  }
-  Py_CLEAR(self->done);
-
-  Py_TpFree(self_);
+  PY_ERR_FETCH(exc);
+  APSWBackup_dealloc_mutex(self);
+  if (PyErr_Occurred())
+    apsw_write_unraisable(NULL);
+  PY_ERR_RESTORE(exc);
 }
 
 /** .. method:: step(npages: int = -1) -> bool
@@ -166,6 +181,8 @@ APSWBackup_step(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nar
     ARG_OPTIONAL ARG_int(npages);
     ARG_EPILOG(NULL, Backup_step_USAGE, );
   }
+
+  ASYNC_FASTCALL(self->dest, APSWBackup_step);
 
   DBMUTEXES_ENSURE(self->source->dbmutex, "Backup source Connection is busy in another thread", self->dest->dbmutex,
                    "Backup destination Connection is busy in another thread");
@@ -217,6 +234,9 @@ APSWBackup_finish(PyObject *self_, PyObject *Py_UNUSED(unused))
   if (!self->backup)
     Py_RETURN_NONE;
 
+  if (!IN_WORKER_THREAD(self->dest))
+    return error_sync_in_async_context();
+
   DBMUTEXES_ENSURE(self->source->dbmutex, "Backup source Connection is busy in another thread", self->dest->dbmutex,
                    "Backup destination Connection is busy in another thread");
 
@@ -225,6 +245,25 @@ APSWBackup_finish(PyObject *self_, PyObject *Py_UNUSED(unused))
     return NULL;
 
   Py_RETURN_NONE;
+}
+
+/** .. method:: afinish() -> None
+
+  Async version of meth:`finish`
+*/
+static PyObject *
+APSWBackup_afinish(PyObject *self_, PyObject *unused)
+{
+  APSWBackup *self = (APSWBackup *)self_;
+
+  /* We handle CHECK_BACKUP_CLOSED internally */
+  if (!self->backup)
+    return async_return_value(Py_None);
+
+  if (IN_WORKER_THREAD(self->dest))
+    return error_async_in_sync_context();
+
+  return do_async_binary((PyObject *)(self->dest), APSWBackup_finish, self_, unused);
 }
 
 /** .. method:: close(force: bool = False) -> None
@@ -251,12 +290,36 @@ APSWBackup_close(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_na
     ARG_OPTIONAL ARG_bool(force);
     ARG_EPILOG(NULL, Backup_close_USAGE, );
   }
+
   DBMUTEXES_ENSURE(self->source->dbmutex, "Backup source Connection is busy in another thread", self->dest->dbmutex,
                    "Backup destination Connection is busy in another thread");
   setexc = APSWBackup_close_internal(self, force);
   if (setexc)
     return NULL;
   Py_RETURN_NONE;
+}
+
+/** .. method:: aclose(force: bool = False) -> None
+
+  Async version of :meth:`close`
+
+*/
+static PyObject *
+APSWBackup_aclose(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+{
+  APSWBackup *self = (APSWBackup *)self_;
+  int force = 0;
+
+  {
+    Backup_aclose_CHECK;
+    ARG_PROLOG(1, Backup_aclose_KWNAMES);
+    ARG_OPTIONAL ARG_bool(force);
+    ARG_EPILOG(NULL, Backup_aclose_USAGE, );
+  }
+
+  if (self->dest)
+    ASYNC_FASTCALL(self->dest, APSWBackup_close);
+  return async_return_value(Py_None);
 }
 
 /** .. attribute:: remaining
@@ -306,10 +369,13 @@ APSWBackup_enter(PyObject *self_, PyObject *Py_UNUSED(ignored))
   APSWBackup *self = (APSWBackup *)self_;
   CHECK_BACKUP_CLOSED(NULL);
 
+  if (!IN_WORKER_THREAD(self->dest))
+    return error_sync_in_async_context();
+
   return Py_NewRef(self_);
 }
 
-/** .. method:: __exit__(etype: Optional[type[BaseException]], evalue: Optional[BaseException], etraceback: Optional[types.TracebackType]) -> Optional[bool]
+/** .. method:: __exit__(etype: type[BaseException] | None, evalue: type[BaseException] | None, etraceback: types.TracebackType | None) -> bool
 
   Implements context manager in conjunction with :meth:`~Backup.__enter__` ensuring
   that the copy is :meth:`finished <Backup.finish>`.
@@ -329,6 +395,10 @@ APSWBackup_exit(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nar
     ARG_MANDATORY ARG_pyobject(etraceback);
     ARG_EPILOG(NULL, Backup_exit_USAGE, );
   }
+
+  if (self->dest && !IN_WORKER_THREAD(self->dest))
+    return error_sync_in_async_context();
+
   /* If already closed then we are fine - CHECK_BACKUP_CLOSED not needed*/
   if (!self->backup)
     Py_RETURN_FALSE;
@@ -351,13 +421,59 @@ APSWBackup_exit(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nar
   Py_RETURN_FALSE;
 }
 
+/** .. method:: __aenter__() -> Self
+
+  Async context manager enter
+*/
 static PyObject *
-APSWBackup_tp_str(PyObject *self_)
+APSWBackup_aenter(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
   APSWBackup *self = (APSWBackup *)self_;
-  return PyUnicode_FromFormat("<apsw.Backup object from %S to %S at %p>",
-                              self->source ? (PyObject *)self->source : apst.closed,
-                              self->dest ? (PyObject *)self->dest : apst.closed, self);
+
+  CHECK_BACKUP_CLOSED(NULL);
+
+  if (IN_WORKER_THREAD(self->dest))
+    return error_async_in_sync_context();
+
+  return async_return_value(self_);
+}
+
+/** .. method:: __aexit__(etype: type[BaseException] | None, evalue: BaseException | None, etraceback: types.TracebackType | None) -> None
+
+  Async context manager exit
+*/
+static PyObject *
+APSWBackup_aexit(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
+{
+  APSWBackup *self = (APSWBackup *)self_;
+
+  CHECK_BACKUP_CLOSED(NULL);
+
+  PyObject *etype, *evalue, *etraceback;
+  {
+    Backup_aexit_CHECK;
+    ARG_PROLOG(3, Backup_aexit_KWNAMES);
+    ARG_MANDATORY ARG_pyobject(etype);
+    ARG_MANDATORY ARG_pyobject(evalue);
+    ARG_MANDATORY ARG_pyobject(etraceback);
+    ARG_EPILOG(NULL, Backup_aexit_USAGE, );
+  }
+
+  (void)etype;
+  (void)evalue;
+  (void)etraceback;
+
+  ASYNC_FASTCALL(self->dest, APSWBackup_exit);
+  return error_async_in_sync_context();
+}
+
+static PyObject *
+APSWBackup_tp_repr(PyObject *self_)
+{
+  APSWBackup *self = (APSWBackup *)self_;
+  if (self->backup)
+    return PyUnicode_FromFormat("<%s from %S to %S at %p>", Py_TypeName(self_), self->source, self->dest, self);
+  return PyUnicode_FromFormat("<%s (closed) at %p>", Py_TypeName(self_), self_);
 }
 
 static int
@@ -391,9 +507,13 @@ static PyGetSetDef backup_getset[] = {
 static PyMethodDef backup_methods[]
     = { { "__enter__", (PyCFunction)APSWBackup_enter, METH_NOARGS, Backup_enter_DOC },
         { "__exit__", (PyCFunction)APSWBackup_exit, METH_FASTCALL | METH_KEYWORDS, Backup_exit_DOC },
+        { "__aenter__", (PyCFunction)APSWBackup_aenter, METH_NOARGS, Backup_aenter_DOC },
+        { "__aexit__", (PyCFunction)APSWBackup_aexit, METH_FASTCALL | METH_KEYWORDS, Backup_aexit_DOC },
         { "step", (PyCFunction)APSWBackup_step, METH_FASTCALL | METH_KEYWORDS, Backup_step_DOC },
         { "finish", (PyCFunction)APSWBackup_finish, METH_NOARGS, Backup_finish_DOC },
+        { "afinish", (PyCFunction)APSWBackup_afinish, METH_NOARGS, Backup_afinish_DOC },
         { "close", (PyCFunction)APSWBackup_close, METH_FASTCALL | METH_KEYWORDS, Backup_close_DOC },
+        { "aclose", (PyCFunction)APSWBackup_aclose, METH_FASTCALL | METH_KEYWORDS, Backup_aclose_DOC },
         { 0, 0, 0, 0 } };
 
 static PyNumberMethods backup_as_number = {
@@ -411,5 +531,6 @@ static PyTypeObject APSWBackupType = {
   .tp_members = backup_members,
   .tp_getset = backup_getset,
   .tp_as_number = &backup_as_number,
-  .tp_str = APSWBackup_tp_str,
+  .tp_repr = APSWBackup_tp_repr,
+  .tp_str = NULL,
 };

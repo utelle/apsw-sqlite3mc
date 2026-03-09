@@ -163,7 +163,6 @@ example usage shown at the end.
             # can't make changes - that is ok
             pass
 
-
     con = apsw.Connection("database.sqlite3")
 
     apply_encryption(con, key="my secret key")

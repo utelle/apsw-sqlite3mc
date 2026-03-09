@@ -12,6 +12,9 @@ import tempfile
 import json
 import pathlib
 
+from apsw.tests.async_meta import get_meta as async_category
+from apsw.tests.async_meta import ASYNCABLE
+
 if len(sys.argv) != 5:
     print("You must supply sqlite version, docdb filename, input and output filenames", file=sys.stderr)
 
@@ -237,9 +240,40 @@ def do_methods():
         if curclass:
             dec = re.sub(r"^(\.\.\s+(method|attribute)::\s+)()", r"\1" + curclass + ".", dec)
         op.append(dec)
-        op.extend(d)
+        if curclass in ASYNCABLE:
+            op.extend(async_markup(curclass, k, ["attribute", "function"]["method::" in dec], d))
+        else:
+            op.extend(d)
         op.append("")
         op.extend(fixup(op, saop))
+
+
+def async_markup(klass: str, member: str, kind: Literal["function" | "attribute"], doclines: list[str]):
+    "returned revised body lines marked up with async behaviour"
+
+    # some we aren't going to markup
+    if {klass, member} == {"Connection", "as_async"}:
+        return doclines
+
+    res = []
+
+    for line in doclines:
+        if line.strip():
+            indent = line[: len(line) - len(line.lstrip())]
+            break
+
+    while doclines[0].strip().startswith(":"):
+        res.append(doclines[0])
+        doclines = doclines[1:]
+
+    if member in {"close", "aclose"}:
+        res.extend(["", f"{indent}|badge-close|", ""])
+    else:
+        am = async_category(klass, member, kind)
+        res.extend(["", f"{indent}|badge-async-{am}|", ""])
+    res.extend(doclines)
+
+    return res
 
 
 # op is current output, integrate is unindented lines that need to be

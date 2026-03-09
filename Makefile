@@ -1,8 +1,8 @@
 
-SQLITEVERSION=3.51.2
+SQLITEVERSION=3.52.0
 APSWSUFFIX=.0
 
-RELEASEDATE="9 January 2026"
+RELEASEDATE="9 March 2026"
 
 VERSION=$(SQLITEVERSION)$(APSWSUFFIX)
 VERDIR=apsw-$(VERSION)
@@ -25,7 +25,8 @@ GENDOCS = \
 GENEXAMPLES = \
     doc/example-fts.rst \
 	doc/example-session.rst \
-	doc/example-json.rst
+	doc/example-json.rst \
+	doc/example-async.rst
 
 .PHONY : help all tagpush clean doc docs build_ext build_ext_debug coverage pycoverage test test_debug fulltest linkcheck unwrapped \
 		 publish stubtest showsymbols compile-win setup-wheel source_nocheck source release pydebug \
@@ -35,7 +36,11 @@ help: ## Show this help
 	@egrep -h '\s##\s' $(MAKEFILE_LIST) | sort | \
 	awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-all: src/apswversion.h src/apsw.docstrings apsw/__init__.pyi src/constants.c src/stringconstants.c  test docs  checkversion ## Update generated files, build, test, make doc
+GENFILES = src/apswversion.h src/apsw.docstrings apsw/__init__.pyi src/constants.c src/stringconstants.c  \
+	apsw/sqlite_extra.json doc/sqlite_extra.rst-inc \
+	$(GENDOCS) $(GENEXAMPLES)
+
+all: $(GENFILES)  checkversion   ## Update generated files
 
 tagpush: ## Tag with version and push
 	test "`git branch --show-current`" = master
@@ -69,13 +74,13 @@ docs-no-fetch: $(GENDOCS) doc/example.rst $(GENEXAMPLES) doc/typing.rstgen doc/r
 
 doc/example.rst: examples/main.py tools/example2rst.py src/apswversion.h
 	rm -f dbfile
-	env PYTHONPATH=. $(PYTHON) -sS tools/example2rst.py examples/main.py doc/example.rst
+	env PYTHONPATH=. $(PYTHON) -s tools/example2rst.py examples/main.py doc/example.rst
 	rm -f dbfile
 
 doc/example-%.rst: examples/%.py tools/example2rst.py src/apswversion.h apsw/ext.py
 	-rm -f recipes.db* other.db* diff_demo.db* alice.db* bob.db*
 	cp ../apsw-extended-testing/recipes.db .
-	env PYTHONPATH=. $(PYTHON) -sS tools/example2rst.py $< $@
+	env PYTHONPATH=. $(PYTHON) -s tools/example2rst.py $< $@
 	-rm -f recipes.db* other.db* diff_demo.db* alice.db* bob.db*
 
 doc/typing.rstgen: src/apswtypes.py tools/types2rst.py
@@ -87,11 +92,11 @@ doc/renames.rstgen: tools/names.py tools/renames.json
 	env PYTHONPATH=. $(PYTHON) tools/names.py rst-gen > doc/renames.rstgen
 
 doc-depends: ## pip installs packages needed to build doc
-	$(PYTHON) -m pip install -U --upgrade-strategy eager sphinx sphinx_rtd_theme
+	$(PYTHON) -m pip install -U --upgrade-strategy eager sphinx sphinx_rtd_theme sphinxcontrib-googleanalytics
 
 dev-depends: ## pip installs packages useful for development (none are necessary except setuptools)
 	$(PYTHON) -m pip install -U --upgrade-strategy eager build wheel setuptools pip
-	$(PYTHON) -m pip install -U --upgrade-strategy eager mypy pdbp coverage ruff
+	$(PYTHON) -m pip install -U --upgrade-strategy eager coverage anyio trio
 
 # This is probably gnu make specific but only developers use this makefile
 $(GENDOCS): doc/%.rst: src/%.c tools/code2rst.py  tools/tocupdate.sql
@@ -107,6 +112,12 @@ src/constants.c: Makefile tools/genconstants.py src/apswversion.h tools/tocupdat
 src/stringconstants.c: Makefile tools/genstrings.py src/apswversion.h
 	-rm -f src/stringconstants.c
 	$(PYTHON) tools/genstrings.py > src/stringconstants.c
+
+apsw/sqlite_extra.json: tools/vend.py
+	$(PYTHON) tools/vend.py json $@
+
+doc/sqlite_extra.rst-inc: tools/vend.py
+	env PYTHONPATH=. $(PYTHON) tools/vend.py rst $@
 
 build_ext: src/apswversion.h  apsw/__init__.pyi src/apsw.docstrings ## Fetches SQLite and builds the extension
 	env $(PYTHON) setup.py fetch --version=$(SQLITEVERSION) --all build_ext -DSQLITE_ENABLE_COLUMN_METADATA --inplace --force --enable-all-extensions
@@ -175,19 +186,23 @@ venv: ## Removes current venv and makes a new one
 	$(PYTHON) -m venv .venv
 	$(MAKE) dev-depends doc-depends PYTHON=.venv/bin/python
 
+pypi_build: ## Does a build in the same manner as for pypi
+	env APSW_FOR_PYPI=t $(PYTHON) -m build -o dist
+
 # set this to a commit id to grab that instead
 FOSSIL_URL="https://sqlite.org/src/tarball/sqlite.tar.gz"
 fossil: ## Grabs latest trunk from SQLite source control, extracts and builds in sqlite3 directory
 	-rm -rf sqlite3
 	mkdir sqlite3
 	set -e ; cd sqlite3 ; curl --output - $(FOSSIL_URL) | tar xfz - --strip-components=1
-	set -e ; cd sqlite3 ; ./configure --quiet --all --disable-tcl ; $(MAKE) sqlite3.c sqlite3
+	set -e ; cd sqlite3 ; ./configure --quiet --all --column-metadata --disable-tcl $(CONFIGURE_OPTS) ; $(MAKE) sqlite3.c sqlite3 libsqlite3.so ; ln -s libsqlite3.so libsqlite3.so.0
+	set -e ; cd sqlite3 ; curl --output - https://sqlite.org/vec1/tarball/vec1.tar.gz | tar xfz -
 	$(PYTHON) setup.py patch
 
 # the funky test stuff is to exit successfully when grep has rc==1 since that means no lines found.
 showsymbols:  ## Finds any C symbols that aren't static(private)
 	rm -f apsw/__init__`$(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"`
-	$(PYTHON) setup.py fetch --all --version=$(SQLITEVERSION) build_ext --inplace --force --enable-all-extensions
+	$(PYTHON) setup.py fetch --all --version=$(SQLITEVERSION) build_ext --inplace --force --enable-all-extensions --enable=column_metadata
 	test -f apsw/__init__`$(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"`
 	set +e; nm --extern-only --defined-only apsw/__init__`$(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"` | egrep -v ' (__bss_start|_edata|_end|_fini|_init|initapsw|PyInit_apsw)$$' ; test $$? -eq 1 || false
 	test -f apsw/_unicode`$(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"`
@@ -219,13 +234,13 @@ compile-win:  ## Builds and tests against all the Python versions on Windows
 # I did try to make this use venv but then the pip inside the venv and
 # other packages were skipped due to metadata issues
 compile-win-one:  ## Does one Windows build - set PYTHON variable
-	$(PYTHON) -m pip install --upgrade --upgrade-strategy eager pip wheel setuptools
+	$(PYTHON) -m pip install --upgrade --upgrade-strategy eager pip wheel setuptools trio anyio
 	$(PYTHON) -m pip uninstall -y apsw
 	copy tools\\setup-pypi.cfg setup.apsw
 	$(PYTHON)  -m pip --no-cache-dir wheel -v .
 	cmd /c FOR %i in (*.whl) DO $(PYTHON)  -m pip --no-cache-dir install --force-reinstall %i
 	$(PYTHON) setup.py build_test_extension
-	$(PYTHON) -m apsw.tests
+	$(PYTHON) -m apsw.tests -vf --locals
 	-del /q setup.apsw *.whl
 
 # We ensure that only master can be made source, and that the
@@ -268,7 +283,7 @@ src/_unicodedb.c: tools/ucdprops2code.py ## Update generated Unicode database lo
 	$(PYTHON) tools/ucdprops2code.py $@
 
 # building a python debug interpreter
-PYDEBUG_VER=3.14.2
+PYDEBUG_VER=3.14.3
 PYDEBUG_DIR=/space/pydebug
 PYTHREAD_VER=$(PYDEBUG_VER)
 PYTHREAD_DIR=/space/pythread
@@ -281,9 +296,9 @@ pydebug: ## Build a debug python including address sanitizer.  Extensions it bui
 	set -x && cd "$(PYDEBUG_DIR)" && find . -delete && \
 	curl https://www.python.org/ftp/python/`echo $(PYDEBUG_VER) | sed 's/[abr].*//'`/Python-$(PYDEBUG_VER).tar.xz | tar xfJ - && \
 	cd Python-$(PYDEBUG_VER) && \
-	./configure --with-address-sanitizer --with-undefined-behavior-sanitizer --with-strict-overflow \
-	--without-pymalloc --with-pydebug --prefix="$(PYDEBUG_DIR)" \
-	--without-freelists --with-assertions && \
+	./configure --enable-slower-safety --with-address-sanitizer --with-undefined-behavior-sanitizer --with-strict-overflow \
+    --without-pymalloc --with-pydebug --with-strict-overflow --prefix="$(PYDEBUG_DIR)" \
+	--with-assertions --with-trace-refs && \
 	env ASAN_OPTIONS=detect_leaks=false $(MAKE) -j install
 	$(MAKE) dev-depends PYTHON=$(PYDEBUG_DIR)/bin/python3
 

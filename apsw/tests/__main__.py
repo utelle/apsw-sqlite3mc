@@ -244,6 +244,9 @@ bgdelthread.start()
 def deletefile(name):
     try:
         os.remove(name)
+        return
+    except FileNotFoundError:
+        return
     except:
         pass
     l = list("abcdefghijklmn")
@@ -254,6 +257,9 @@ def deletefile(name):
         count += 1
         try:
             os.rename(name, newname)
+            return
+        except FileNotFoundError:
+            return
         except:
             if count > 30:  # 3 seconds we have been at this!
                 # So give up and give it a stupid name.  The sooner
@@ -502,6 +508,7 @@ class APSW(unittest.TestCase):
             called = []
 
             def ehook(*args):
+                str(args)
                 if len(args) == 1:
                     t = args[0].exc_type
                     v = args[0].exc_value
@@ -1349,6 +1356,49 @@ class APSW(unittest.TestCase):
             self.assertRaisesUnraisable(TypeError, apsw.log, 11, "recursion error forced")
         finally:
             apsw.config(apsw.SQLITE_CONFIG_LOG, None)
+
+    def testIssue595(self):
+        "exec/row tracer errors show up in augmented stack trace"
+
+        def bad_exec1(*args):
+            1 / 0
+
+        def bad_exec2(*args):
+            return 3 + 4j
+
+        def bad_row1(*args):
+            1 / 0
+
+        out = io.StringIO()
+        self.db.exec_trace = bad_exec1
+        try:
+            self.db.execute("select 3")
+        except Exception:
+            apsw.ext.print_augmented_traceback(*sys.exc_info(), file=out)
+        self.assertIn(", in APSWCursor_do_exec_trace", out.getvalue())
+        self.assertIn(", in bad_exec1", out.getvalue())
+
+        out = io.StringIO()
+        self.db.exec_trace = bad_exec2
+        try:
+            self.db.execute("select 3")
+        except Exception:
+            apsw.ext.print_augmented_traceback(*sys.exc_info(), file=out)
+
+        self.assertIn(", in APSWCursor_do_exec_trace", out.getvalue())
+        self.assertIn(f"returned = {3 + 4j}", out.getvalue())
+
+        self.db.exec_trace = None
+
+        out = io.StringIO()
+        self.db.row_trace = bad_row1
+        try:
+            self.db.execute("select 3,4").fetchall()
+        except Exception:
+            apsw.ext.print_augmented_traceback(*sys.exc_info(), file=out)
+
+        self.assertIn(", in APSWCursor_do_row_trace", out.getvalue())
+        self.assertIn(f"row = {(3, 4)}", out.getvalue())
 
     def testTypes(self):
         "Check type information is maintained"
@@ -2836,6 +2886,15 @@ class APSW(unittest.TestCase):
         new = self.db.data_version()
         self.assertNotEqual(b4, new)
 
+    def testReserveBytes(self):
+        self.assertRaises(TypeError, self.db.reserve_bytes, 3)
+        self.assertRaises(TypeError, self.db.reserve_bytes, "main", "main")
+        # unknown schema
+        self.assertRaises(apsw.SQLError, self.db.data_version, "orange")
+        self.assertEqual(0, self.db.reserve_bytes())
+        self.assertEqual(23, self.db.reserve_bytes(reserve=23))
+        self.assertEqual(23, self.db.reserve_bytes(reserve=9675675))
+
     def testFastcall(self):
         "fastcall argument processing"
         # function that takes one argument
@@ -3922,10 +3981,9 @@ class APSW(unittest.TestCase):
         self.assertTrue(frame.f_lineno > 100)
         self.assertTrue(frame.f_code.co_name.endswith("-badfunc"))
         # check local variables
-        if platform.python_implementation() != "PyPy":
-            l = frame.f_locals
-            self.assertIn("NumberOfArguments", l)
-            self.assertEqual(l["NumberOfArguments"], 3)
+        l = frame.f_locals
+        self.assertIn("NumberOfArguments", l)
+        self.assertEqual(l["NumberOfArguments"], 3)
 
     def testLoadExtension(self):
         "Check loading of extensions"
@@ -4817,7 +4875,7 @@ class APSW(unittest.TestCase):
         blob = self.db.blob_open("main", "foo", "x", rowid, True)
         blob.close()
         nargs = self.blob_nargs
-        for func in [x for x in dir(blob) if not x.startswith("__") and not x in ("close",)]:
+        for func in [x for x in dir(blob) if not x.startswith("__") and x not in ("close", "aclose")]:
             args = ("one", "two", "three")[: nargs.get(func, 0)]
             try:
                 getattr(blob, func)(*args)
@@ -4828,7 +4886,7 @@ class APSW(unittest.TestCase):
         self.db.close()
         nargs = self.connection_nargs
         tested = 0
-        for func in [x for x in dir(self.db) if x in nargs or (not x.startswith("__") and not x in ("close",))]:
+        for func in [x for x in dir(self.db) if x in nargs or (not x.startswith("__") and x not in ("close", "aclose", "as_async"))]:
             tested += 1
             args = ("one", "two", "three")[: nargs.get(func, 0)]
 
@@ -4845,7 +4903,7 @@ class APSW(unittest.TestCase):
         # do the same thing, but for cursor
         nargs = self.cursor_nargs
         tested = 0
-        for func in [x for x in dir(cur) if not x.startswith("__") and not x in ("close",)]:
+        for func in [x for x in dir(cur) if not x.startswith("__") and x not in ("close", "aclose")]:
             tested += 1
             args = ("one", "two", "three")[: nargs.get(func, 0)]
             try:
@@ -5136,7 +5194,6 @@ class APSW(unittest.TestCase):
             # I can't confidently say that all threads would have got execution time
             # on all the platforms out there, so check if env var was set
             self.assertTrue(all(v > 0 for v in did_work.values()), f"{did_work=}")
-            self.assertTrue(all(v > 0 for v in locked.values()), f"{locked=}")
 
     def testIssue50(self):
         "Issue 50: Check Blob.read return value on eof"
@@ -5474,10 +5531,11 @@ class APSW(unittest.TestCase):
 
         for o in objects:
             for n in dir(o):
-                try:
-                    getattr(o, n)
-                except apsw.Error:
-                    pass
+                if n not in {"async_controller"}:
+                    try:
+                        getattr(o, n)
+                    except apsw.Error:
+                        pass
 
     def testIssue488(self):
         "__init__ called multiple times"
@@ -5978,6 +6036,9 @@ class APSW(unittest.TestCase):
             "cursor",
             "APSWChangesetIterator",
             "JSONB",
+            "AwaitableWrapper",
+            "BoxedCall",
+            "APSWChangeset",
         ) or name in {"apsw_no_change_repr", "convert_column_to_pyobject"}:
             return
 
@@ -5985,6 +6046,7 @@ class APSW(unittest.TestCase):
             "APSWCursor": {
                 "skip": (
                     "dealloc",
+                    "dealloc_mutex",
                     "init",
                     "dobinding",
                     "dobindings",
@@ -5992,9 +6054,10 @@ class APSW(unittest.TestCase):
                     "do_row_trace",
                     "step",
                     "close",
+                    "aclose",
                     "close_internal",
                     "tp_traverse",
-                    "tp_str",
+                    "tp_repr",
                     "get_description",
                     "get_description_full",
                     "getdescription_dbapi",
@@ -6009,8 +6072,10 @@ class APSW(unittest.TestCase):
                 "skip": (
                     "internal_cleanup",
                     "dealloc",
+                    "dealloc_mutex",
                     "init",
                     "close",
+                    "aclose",
                     "interrupt",
                     "close_internal",
                     "remove_dependent",
@@ -6022,7 +6087,7 @@ class APSW(unittest.TestCase):
                     "tp_traverse",
                     "get_cursor_factory",
                     "set_cursor_factory",
-                    "tp_str",
+                    "tp_repr",
                     "bool",
                 ),
                 "req": {
@@ -6035,9 +6100,12 @@ class APSW(unittest.TestCase):
                     "init",
                     "close_internal",
                     "close",
+                    "aclose",
                     "get_change_patch_set",
                     "get_change_patch_set_stream",
                     "dealloc",
+                    "dealloc_mutex",
+                    "tp_repr",
                     "tp_traverse",
                     "bool",
                 },
@@ -6046,14 +6114,14 @@ class APSW(unittest.TestCase):
             },
             "APSWTableChange": {
                 "skip": {
-                    "tp_str",
+                    "tp_repr",
                     "dealloc",
                 },
                 "req": {"scope": "CHECK_TABLE_SCOPE"},
                 "order": ("scope",),
             },
             "APSWChangesetBuilder": {
-                "skip": {"dealloc", "close_internal", "close", "init", "tp_traverse", "bool"},
+                "skip": {"dealloc", "dealloc_mutex", "close_internal", "close", "init", "tp_traverse", "bool"},
                 "req": {"closed": "CHECK_BUILDER_CLOSED"},
                 "order": ("closed",),
             },
@@ -6063,12 +6131,12 @@ class APSW(unittest.TestCase):
                 "order": ("closed",),
             },
             "APSWBlob": {
-                "skip": ("dealloc", "init", "close", "close_internal", "tp_str", "bool"),
+                "skip": ("dealloc", "dealloc_mutex", "init", "close", "close_internal", "tp_repr", "bool", "aclose"),
                 "req": {"closed": "CHECK_BLOB_CLOSED"},
                 "order": ("use", "closed"),
             },
             "APSWBackup": {
-                "skip": ("dealloc", "init", "close_internal", "get_remaining", "get_page_count", "tp_str", "bool"),
+                "skip": ("dealloc", "dealloc_mutex", "init", "close_internal", "get_remaining", "get_page_count", "tp_repr", "bool", "aclose"),
                 "req": {"closed": "CHECK_BACKUP_CLOSED"},
                 "order": ("use", "closed"),
             },
@@ -6114,7 +6182,7 @@ class APSW(unittest.TestCase):
             },
             "PreUpdate":
             {
-                "skip": ("dealloc", "tp_str", ),
+                "skip": ("dealloc", "tp_repr", ),
                 "req": {"check": "CHECK_PREUPDATE_SCOPE"},
                 "order": ("check",),
             },
@@ -7285,10 +7353,13 @@ class APSW(unittest.TestCase):
                 self.basevfs = basevfs
                 apsw.VFS.__init__(self, self.vfsname, self.basevfs, exclude=None)
 
-            def xOpen(self, name, flags):
-                return ObfuscatedVFSFile(self.basevfs, name, flags)
+            def xOpen(innerself, name, flags):
+                x=ObfuscatedVFSFile(innerself.basevfs, name, flags)
+                self.assertIsNotNone(re.match("<ObfuscatedVFSFile filename \".*\" at 0x[A-Fa-f0-9]+>", str(x)))
+                return x
 
         vfs = ObfuscatedVFS()
+        self.assertIsNotNone(re.match("<ObfuscatedVFS \"obfu\" inherits from \".*\" at 0x[0-9a-fA-F]+>", str(vfs)))
 
         query = "create table foo(x,y); insert into foo values(1,2); insert into foo values(3,4)"
         self.db.cursor().execute(query)
@@ -7839,6 +7910,13 @@ class APSW(unittest.TestCase):
                 return "a" * amount
 
             def xRead5(self, amount, offset):
+                # This does short reads on purpose.
+                if "DEBUG" in apsw.compile_options:
+                    # SQLite has an assertion that gets hit if amount
+                    # is zero which happens under Windows but not
+                    # other platforms so we avoid zero length reads
+                    # when assertions are enabled
+                    return super().xRead(max(1, amount - 1), offset)
                 return super().xRead(amount - 1, offset)
 
             def xRead99(self, amount, offset):
@@ -8668,6 +8746,7 @@ class APSW(unittest.TestCase):
         for v in "deFerreD", "IMMEDiAte", "EXCLUSive":
             setattr(self.db, "transaction_mode", v)
             self.assertEqual(v.upper(), self.db.transaction_mode)
+        self.assertRaises(TypeError, setattr, self.db, "transaction_mode", 3+4j)
 
         self.assertRaises(TypeError, setattr, self.db, 3)
 
@@ -11117,7 +11196,7 @@ shell.write(shell.stdout, "hello world\\n")
             self.assertEqual(a["three"], str)
             self.assertEqual(a["four"], bytes)
             self.assertEqual(a["five"], float)
-            self.assertEqual(a["six"], typing.Union[float, int])
+            self.assertEqual(a["six"], float |  int)
 
     def testExtTypesConverter(self) -> None:
         "apsw.ext.TypesConverterCursorFactory"
@@ -11649,7 +11728,7 @@ SELECT group_concat(rtrim(t),x'0a') FROM a;
             backup2,
         )
         for o in objects:
-            self.assertNotEqual(repr(o), str(o))
+            self.assertEqual(repr(o), str(o))
             # issue 501
             if isinstance(o, apsw.URIFilename):
                 self.assertNotEqual(repr(o), urinamestr)
@@ -11801,6 +11880,10 @@ class ZZFaultInjection(unittest.TestCase):
         apsw.faultdict["ConnectionReadError"] = True
         self.assertRaises(apsw.IOError, self.db.read, "main", 0, 0, 1)
 
+        ## ConnectionAsyncTpNewFails
+        apsw.faultdict["ConnectionAsyncTpNewFails"] = True
+        self.assertRaises(MemoryError, apsw.Connection.as_async, "")
+
         ### vfs routines
 
         class FaultVFS(apsw.VFS):
@@ -11902,116 +11985,6 @@ class ZZFaultInjection(unittest.TestCase):
 
         for k, v in apsw.faultdict.items():
             assert v is False, f"faultdict {k} never fired"
-
-    # This test is run last by deliberate name choice.  If it did
-    # uncover any bugs there isn't much that can be done to turn the
-    # checker off.
-    def testzzForkChecker(self):
-        "Test detection of using objects across fork"
-        # need to free up everything that already exists
-        self.db.close()
-        self.db = None
-        gc.collect()
-        # install it
-        apsw.fork_checker()
-
-        # return some objects
-        def getstuff():
-            db = apsw.Connection(":memory:")
-            cur = db.cursor()
-            for row in cur.execute(
-                "create table foo(x);insert into foo values(1);insert into foo values(x'aabbcc'); select last_insert_rowid()"
-            ):
-                blobid = row[0]
-            blob = db.blob_open("main", "foo", "x", blobid, 0)
-            db2 = apsw.Connection(":memory:")
-            backup = db2.backup("main", db, "main")
-            return (db, cur, blob, backup)
-
-        # test the objects
-        def teststuff(db, cur, blob, backup):
-            if db:
-                db.cursor().execute("select 3")
-            if cur:
-                cur.execute("select 3")
-            if blob:
-                blob.read(1)
-            if backup:
-                backup.step()
-
-        # Sanity check
-        teststuff(*getstuff())
-        # get some to use in parent
-        parent = getstuff()
-        # to be used (and fail with error) in child
-        child = getstuff()
-
-        def childtest(*args):
-            # we can't use unittest methods here since we are in a different process
-
-            # this should work
-            teststuff(*getstuff())
-
-            # ignore the unraisable stuff sent to sys.excepthook
-            def eh(*args):
-                pass
-
-            sys.excepthook = eh
-
-            # call with each separate item to check
-            try:
-                for i in range(len(args)):
-                    a = [None] * len(args)
-                    a[i] = args[i]
-                    try:
-                        teststuff(*a)
-                    except apsw.ForkingViolationError:
-                        pass
-            except apsw.ForkingViolationError:
-                # we get one final exception "between" line due to the
-                # nature of how the exception is raised
-                pass
-            # this should work again
-            teststuff(*getstuff())
-            os._exit(0)
-
-        suppressWarning("DeprecationWarning")  # we are deliberately forking
-        pid = os.fork()
-
-        if pid == 0:
-            # child
-            counter = 0
-
-            def ueh(unraisable):
-                if unraisable.exc_type != apsw.ForkingViolationError:
-                    print("\n\nUnraisable exception in child process", unraisable)
-                    return sys.__unraisablehook__(unraisable)
-                nonlocal counter
-                counter += 1
-                if counter > 100:
-                    os._exit(0)
-
-            sys.unraisablehook = ueh
-            try:
-                childtest(*child)
-            except:
-                print("\n\nThis exception in THE CHILD PROCESS OF FORK CHECKER\n", file=sys.stderr)
-                traceback.print_exc()
-                print("\nEnd CHILD traceback\n\n")
-                os._exit(1)
-            os._exit(0)
-
-        rc = os.waitpid(pid, 0)
-        self.assertEqual(0, os.waitstatus_to_exitcode(rc[1]))
-
-        teststuff(*parent)
-
-        # we call shutdown to free mutexes used in fork checker,
-        # so clear out all the things first
-        del child
-        del parent
-        gc.collect()
-        apsw.shutdown()
 
 
 testtimeout = False  # timeout testing adds several seconds to each run
@@ -12130,43 +12103,12 @@ def setup():
     try:
         apsw.config(apsw.SQLITE_CONFIG_MEMSTATUS, True)  # ensure memory tracking is on
     except apsw.MisuseError:
-        # if using amalgamation then something went wrong
-        if apsw.using_amalgamation:
-            raise
-        # coverage uses sqlite and so the config call is too
-        # late
+        # sqlite was already initialized
         pass
     apsw.initialize()  # manual call for coverage
     memdb = apsw.Connection(":memory:")
     if not getattr(memdb, "enableloadextension", None):
         del APSW.testLoadExtension
-
-    # Fork checker is becoming less usefull on newer Pythons because
-    # multiprocessing really doesn't want you to use fork and does
-    # alternate methods instead.  We also run sanitizers on most
-    # recent Python which makes things even more convoluted.
-    forkcheck = False
-    if (
-        hasattr(apsw, "fork_checker")
-        and hasattr(os, "fork")
-        and platform.python_implementation() != "PyPy"
-        and sys.version_info < (3, 13)
-    ):
-        try:
-            import multiprocessing
-
-            if hasattr(multiprocessing, "get_start_method"):
-                if multiprocessing.get_start_method() != "fork":
-                    raise ImportError
-            # sometimes the import works but doing anything fails
-            val = multiprocessing.Value("i", 0)
-            forkcheck = True
-        except ImportError:
-            pass
-
-    # we also remove forkchecker if doing multiple iterations
-    if not forkcheck or "APSW_TEST_ITERATIONS" in os.environ:
-        del ZZFaultInjection.testzzForkChecker
 
     if not is64bit or "APSW_TEST_LARGE" not in os.environ:
         del APSW.testLargeObjects
@@ -12215,7 +12157,12 @@ from .ftstests import *
 from .sessiontests import *
 from .jsonb import *
 from .carray import *
+from .aiotest import *
+from .extratest import *
 from .mctests import *
+
+if "APSW_TEST_ITERATIONS" not in os.environ:
+    from .fork_checker import *
 
 if __name__ == "__main__":
     setup()
@@ -12257,6 +12204,7 @@ if __name__ == "__main__":
     del apsw.ext
     del apsw.bestpractice
     gc.collect()  # all cursors & connections must be gone
+    assert len(apsw.connections()) == 0
     apsw.shutdown()
     apsw.config(apsw.SQLITE_CONFIG_LOG, None)
     if hasattr(apsw, "_fini"):

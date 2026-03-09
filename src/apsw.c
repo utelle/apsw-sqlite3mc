@@ -86,6 +86,18 @@ API Reference
 #define SQLITE_ENABLE_SETLK_TIMEOUT 1
 #endif
 
+#ifndef SQLITE_OMIT_AUTOINIT
+#define SQLITE_OMIT_AUTOINIT 1
+#endif
+
+#ifndef SQLITE_STRICT_SUBTYPE
+#define SQLITE_STRICT_SUBTYPE 1
+#endif
+
+#ifndef SQLITE_LIKE_DOESNT_MATCH_BLOBS
+#define SQLITE_LIKE_DOESNT_MATCH_BLOBS 1
+#endif
+
 #ifndef SQLITE_DEBUG
 #define SQLITE_API static
 #define SQLITE_EXTERN static
@@ -98,8 +110,8 @@ API Reference
 #include "sqlite3.h"
 #endif
 
-#if SQLITE_VERSION_NUMBER < 3051000
-#error Your SQLite version is too old.  It must be at least 3.51
+#if SQLITE_VERSION_NUMBER < 3052000
+#error Your SQLite version is too old.  It must be at least 3.52
 #endif
 
 #include "sqlite_debug.h"
@@ -181,8 +193,7 @@ static PyObject *apsw_no_change_object;
 static PyObject *
 apsw_no_change_repr(PyObject *self)
 {
-  Py_INCREF(apst.no_change);
-  return apst.no_change;
+  return Py_NewRef(apst.no_change);
 }
 
 static PyTypeObject apsw_no_change_type = {
@@ -230,6 +241,9 @@ static void apsw_write_unraisable(PyObject *hookobject);
 /* Augment tracebacks */
 #include "traceback.c"
 
+/* aio/async stuff */
+#include "async.c"
+
 /* various utility functions and macros */
 #include "util.c"
 
@@ -276,6 +290,10 @@ static int allow_missing_dict_bindings = 0;
 
 /* constants */
 #include "constants.c"
+
+#ifdef APSW_FORK_CHECKER
+static sqlite3_mutex_methods apsw_orig_mutex_methods;
+#endif
 
 /* MODULE METHODS */
 
@@ -406,7 +424,7 @@ enable_shared_cache(PyObject *Py_UNUSED(self), PyObject *const *fast_args, Py_ss
 
 /** .. method:: connections() -> list[Connection]
 
-  Returns a list of the connections
+  Returns a list of the open connections
 
 */
 static PyObject *the_connections;
@@ -493,39 +511,47 @@ initialize(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 
 /** .. method:: shutdown() -> None
 
-  It is unlikely you will want to call this method and there is no
-  need to do so.  It is a **really** bad idea to call it unless you
-  are absolutely sure all :class:`connections <Connection>`,
-  :class:`blobs <Blob>`, :class:`cursors <Cursor>`, :class:`vfs <VFS>`
-  etc have been closed, deleted and garbage collected.
+  It is unlikely you will want to call this method and there is no need
+  to do so.  You will get :exc:`MisuseError` if there are any
+  :func:`connections active <connections>` and need to close them first.
+
+  VFS remain registered across a shutdown and initialise.
 
   -* sqlite3_shutdown
 */
-#ifdef APSW_FORK_CHECKER
-static void free_fork_checker(void);
-#endif
-
 static PyObject *
 sqliteshutdown(PyObject *Py_UNUSED(unused1), PyObject *Py_UNUSED(unused2))
 {
   int res;
 
+  PyObject *conns = apsw_connections(NULL, NULL);
+  if (!conns)
+    return NULL;
+  Py_ssize_t count = PyList_Size(conns);
+  Py_DECREF(conns);
+
+  if (count != 0)
+    return PyErr_Format(get_exception_for_code(SQLITE_MISUSE), "All connections need to be closed to call shutdown");
+
   res = sqlite3_shutdown();
   SET_EXC(res, NULL);
 
+#ifdef APSW_FORK_CHECKER
+  if (apsw_orig_mutex_methods.xMutexInit)
+  {
+    sqlite3_config(SQLITE_CONFIG_MUTEX, &apsw_orig_mutex_methods);
+  }
+#endif
+
   if (PyErr_Occurred())
     return NULL;
-
-#ifdef APSW_FORK_CHECKER
-  free_fork_checker();
-#endif
 
   Py_RETURN_NONE;
 }
 
 /** .. method:: config(op: int, *args: Any) -> None
 
-  :param op: A `configuration operation <https://sqlite.org/c3ref/c_config_chunkalloc.html>`_
+  :param op: A `configuration operation <https://sqlite.org/c3ref/c_config_covering_index_scan.html>`_
   :param args: Zero or more arguments as appropriate for *op*
 
   Some operations don't make sense from a Python program.  All the
@@ -833,7 +859,7 @@ release_memory(PyObject *Py_UNUSED(self), PyObject *const *fast_args, Py_ssize_t
 
   Returns current and highwater measurements.
 
-  :param op: A `status parameter <https://sqlite.org/c3ref/c_status_malloc_size.html>`_
+  :param op: A `status parameter <https://sqlite.org/c3ref/c_status_malloc_count.html>`_
   :param reset: If *True* then the highwater is set to the current value
   :returns: A tuple of current value and highwater value
 
@@ -988,9 +1014,9 @@ vfs_details(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
   particular SQLite `error code
   <https://sqlite.org/c3ref/c_abort.html>`_ then call this function.
   It also understands `extended error codes
-  <https://sqlite.org/c3ref/c_ioerr_access.html>`_.
+  <https://sqlite.org/c3ref/c_abort_rollback.html>`_.
 
-  For example to raise `SQLITE_IOERR_ACCESS <https://sqlite.org/c3ref/c_ioerr_access.html>`_::
+  For example to raise `SQLITE_IOERR_ACCESS <https://sqlite.org/rescode.html#ioerr_access>`_::
 
     raise apsw.exception_for(apsw.SQLITE_IOERR_ACCESS)
 
@@ -1026,8 +1052,7 @@ get_apsw_exception_for(PyObject *Py_UNUSED(self), PyObject *const *fast_args, Py
     goto error;
   if (0 != PyObject_SetAttr(result, apst.extendedresult, tmp))
     goto error;
-  Py_DECREF(tmp);
-  tmp = PyLong_FromLong(code & 0xff);
+  Py_SETREF(tmp, PyLong_FromLong(code & 0xff));
   if (!tmp)
     goto error;
   if (0 != PyObject_SetAttr(result, apst.result, tmp))
@@ -1082,6 +1107,12 @@ static PyObject *
 apsw_fini(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   fini_apsw_strings();
+  Py_CLEAR(coro_for_value);
+  Py_CLEAR(coro_for_exception);
+  Py_CLEAR(coro_for_stopasynciteration);
+  PyMem_Free(pending_call_slots);
+  pending_call_slots = 0;
+  pending_call_slots_count = 0;
   Py_RETURN_NONE;
 }
 #endif
@@ -1129,8 +1160,6 @@ static apsw_mutex *apsw_mutexes[]
         NULL, /* from this point on corresponds to the various static mutexes */
         NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 
-static sqlite3_mutex_methods apsw_orig_mutex_methods;
-
 static int
 apsw_xMutexInit(void)
 {
@@ -1143,10 +1172,6 @@ apsw_xMutexEnd(void)
   return apsw_orig_mutex_methods.xMutexEnd();
 }
 
-#define MUTEX_MAX_ALLOC 20
-static apsw_mutex *fork_checker_mutexes[MUTEX_MAX_ALLOC];
-static int current_apsw_fork_mutex = 0;
-
 static sqlite3_mutex *
 apsw_xMutexAlloc(int which)
 {
@@ -1158,15 +1183,16 @@ apsw_xMutexAlloc(int which)
     sqlite3_mutex *m = apsw_orig_mutex_methods.xMutexAlloc(which);
 
     if (!m)
-      return m;
-    assert(current_apsw_fork_mutex < MUTEX_MAX_ALLOC);
-    fork_checker_mutexes[current_apsw_fork_mutex++] = am = malloc(sizeof(apsw_mutex));
+      return NULL;
+    am = malloc(sizeof(apsw_mutex));
+    if (!am)
+      return NULL;
     am->pid = getpid();
     am->underlying_mutex = m;
     return (sqlite3_mutex *)am;
   }
   default:
-    /* verify we have space */
+    /* verify we have space for a static mutex */
     assert((unsigned)which < sizeof(apsw_mutexes) / sizeof(apsw_mutexes[0]));
     /* fill in if missing */
     if (!apsw_mutexes[which])
@@ -1179,23 +1205,6 @@ apsw_xMutexAlloc(int which)
   }
 }
 
-static void
-free_fork_checker(void)
-{
-  unsigned i;
-  for (i = 0; i < sizeof(apsw_mutexes) / sizeof(apsw_mutexes[0]); i++)
-  {
-    free(apsw_mutexes[i]);
-    apsw_mutexes[i] = NULL;
-  }
-  for (i = 0; i < MUTEX_MAX_ALLOC; i++)
-  {
-    free(fork_checker_mutexes[i]);
-    fork_checker_mutexes[i] = 0;
-  }
-  current_apsw_fork_mutex = 0;
-}
-
 static int
 apsw_check_mutex(apsw_mutex *am)
 {
@@ -1203,10 +1212,10 @@ apsw_check_mutex(apsw_mutex *am)
   {
     PyGILState_STATE gilstate;
     gilstate = PyGILState_Ensure();
-    PyErr_Format(ExcForkingViolation,
+    PyErr_SetString(ExcForkingViolation,
                  "SQLite object allocated in one process is being used in another (across a fork)");
     apsw_write_unraisable(NULL);
-    PyErr_Format(ExcForkingViolation,
+    PyErr_SetString(ExcForkingViolation,
                  "SQLite object allocated in one process is being used in another (across a fork)");
     PyGILState_Release(gilstate);
     return SQLITE_MISUSE;
@@ -1220,6 +1229,7 @@ apsw_xMutexFree(sqlite3_mutex *mutex)
   apsw_mutex *am = (apsw_mutex *)mutex;
   apsw_check_mutex(am);
   apsw_orig_mutex_methods.xMutexFree(am->underlying_mutex);
+  free(am);
 }
 
 static void
@@ -1292,7 +1302,7 @@ static sqlite3_mutex_methods apsw_mutex_methods
 
   One example of how you may end up using fork is if you use the
   :mod:`multiprocessing module <multiprocessing>` which can use
-  fork to make child processes.
+  fork to make child processes in less recent Python versions.
 
   If you do use fork or multiprocessing on a platform that supports fork
   then you **must** ensure database connections and their objects
@@ -1314,11 +1324,10 @@ static sqlite3_mutex_methods apsw_mutex_methods
   arose.  (Destructors of objects you didn't close also run between
   lines.)
 
-  You should only call this method as the first line after importing
-  APSW, as it has to shutdown and re-initialize SQLite.  If you have
-  any SQLite objects already allocated when calling the method then
-  the program will later crash.  The recommended use is to use the fork
-  checking as part of your test suite.
+  Calling this method requires doing a :func:`shutdown` which means there
+  can be no active connections.
+
+  The recommended use is to use the fork checking as part of your test suite.
 */
 static PyObject *
 apsw_fork_checker(PyObject *Py_UNUSED(self))
@@ -1328,6 +1337,16 @@ apsw_fork_checker(PyObject *Py_UNUSED(self))
   /* ignore multiple attempts to use this routine */
   if (apsw_orig_mutex_methods.xMutexInit)
     goto ok;
+
+  sqlite3_mutex_methods dummy;
+
+  rc = sqlite3_config(SQLITE_CONFIG_GETMUTEX, &dummy);
+  if (rc)
+  {
+    PyErr_Format(get_exception_for_code(rc),
+                 "SQLite needs to be shutdown while no connections are active in order to install the fork checker");
+    goto fail;
+  }
 
   /* Ensure mutex methods available and installed */
   rc = sqlite3_initialize();
@@ -1530,13 +1549,8 @@ formatsqlvalue(PyObject *Py_UNUSED(self), PyObject *value)
 
     if (simple)
     {
-#ifdef PYPY_VERSION
-      PyErr_Format(PyExc_NotImplementedError, "PyPy has not implemented PyUnicode_CopyCharacters");
-      return NULL;
-#else
       PyUnicode_CopyCharacters(strres, 1, value, 0, input_length);
       return strres;
-#endif
     }
 
     outpos = 1;
@@ -1858,27 +1872,7 @@ apsw_allow_missing_dict_bindings(PyObject *Py_UNUSED(module), PyObject *const *f
   Py_RETURN_FALSE;
 }
 
-static PyObject *
-apsw_getattr(PyObject *Py_UNUSED(module), PyObject *name)
-{
-  PyObject *shellmodule = NULL, *res = NULL;
-#undef PyUnicode_AsUTF8
-  /* we can't do this because it messes up the import machinery */
-  const char *cname = PyUnicode_AsUTF8(name);
-#include "faultinject.h"
 
-  if (!cname)
-    return NULL;
-
-  if (strcmp(cname, "Shell") && strcmp(cname, "main"))
-    return PyErr_Format(PyExc_AttributeError, "Unknown apsw attribute %R", name);
-
-  shellmodule = PyImport_ImportModule("apsw.shell");
-  if (shellmodule)
-    res = PyObject_GetAttr(shellmodule, name);
-  Py_XDECREF(shellmodule);
-  return res;
-}
 
 static PyMethodDef module_methods[] = {
   { "sqlite3_sourceid", (PyCFunction)get_sqlite3_sourceid, METH_NOARGS, Apsw_sqlite3_sourceid_DOC },
@@ -1919,7 +1913,6 @@ static PyMethodDef module_methods[] = {
 #ifdef APSW_FORK_CHECKER
   { "fork_checker", (PyCFunction)apsw_fork_checker, METH_NOARGS, Apsw_fork_checker_DOC },
 #endif
-  { "__getattr__", (PyCFunction)apsw_getattr, METH_O, "module getattr" },
   { "connections", (PyCFunction)apsw_connections, METH_NOARGS, Apsw_connections_DOC },
   { "sleep", (PyCFunction)apsw_sleep, METH_FASTCALL | METH_KEYWORDS, Apsw_sleep_DOC },
 #ifdef SQLITE_ENABLE_SESSION
@@ -1949,6 +1942,62 @@ static PyMethodDef module_methods[] = {
   { 0, 0, 0, 0 } /* Sentinel */
 };
 
+/* This next section until PyInit_apsw is to catch attempts to overwrite the async context vars */
+static int module_is_initialized;
+
+static int
+apsw_module_setattr(PyObject *module, PyObject *name, PyObject *value)
+{
+  if (module_is_initialized
+      && (PyObject_RichCompareBool(name, apst.async_controller, Py_EQ) == 1
+          || PyObject_RichCompareBool(name, apst.async_cursor_prefetch, Py_EQ) == 1))
+  {
+    PyErr_Format(PyExc_AttributeError,
+                 "Do not overwrite apsw.%S.  It is a context var - use its set method in your context", name);
+    return -1;
+  }
+
+  if (module_is_initialized && (PyObject_RichCompareBool(name, apst.async_run_coro, Py_EQ) == 1))
+  {
+    if (!Py_IsNone(value) && !PyCallable_Check(value))
+    {
+      PyErr_Format(PyExc_TypeError, "Expected None or a callable for async_run_coro, not %s", Py_TypeName(value));
+      return -1;
+    }
+    return PyDict_SetItem(PyThreadState_GetDict(), async_run_coro_sentinel, value);
+  }
+
+  return PyErr_Occurred() ? -1 : PyObject_GenericSetAttr(module, name, value);
+}
+
+static PyObject *
+apsw_module_getattr(PyObject *module, PyObject *name)
+{
+  if (module_is_initialized && (PyObject_RichCompareBool(name, apst.async_run_coro, Py_EQ) == 1))
+  {
+    PyObject *runner = PyDict_GetItemWithError(PyThreadState_GetDict(), async_run_coro_sentinel);
+    if (PyErr_Occurred())
+      return NULL;
+    if (!runner)
+      Py_RETURN_NONE;
+    return Py_NewRef(runner);
+  }
+  if (module_is_initialized && (PyObject_RichCompareBool(name, apst.main, Py_EQ) == 1))
+    return PyImport_ImportModuleAttr(apst.apsw_shell, apst.main);
+
+  if (module_is_initialized && (PyObject_RichCompareBool(name, apst.Shell, Py_EQ) == 1))
+    return PyImport_ImportModuleAttr(apst.apsw_shell, apst.Shell);
+
+  return PyObject_GenericGetAttr(module, name);
+}
+
+static PyTypeObject ApswModuleType = {
+  PyVarObject_HEAD_INIT(NULL, 0).tp_name = "APSWModule",
+  .tp_flags = Py_TPFLAGS_DEFAULT,
+  .tp_setattro = apsw_module_setattr,
+  .tp_getattro = apsw_module_getattr,
+};
+
 static struct PyModuleDef apswmoduledef = { PyModuleDef_HEAD_INIT, "apsw", NULL, -1, module_methods, 0, 0, 0, 0 };
 
 PyMODINIT_FUNC
@@ -1967,13 +2016,37 @@ PyInit_apsw(void)
     goto fail;
   }
 
+#ifdef APSW_USE_SQLITE_AMALGAMATION
+  {
+    int rc = sqlite3_initialize();
+    if (rc != SQLITE_OK)
+    {
+      PyErr_Format(PyExc_RuntimeError, "SQLite failed to initialize with code %d", rc);
+      goto fail;
+    }
+  }
+#endif
+
+  module_is_initialized = 0;
+  if (ApswModuleType.tp_base == NULL)
+  {
+    ApswModuleType.tp_base = &PyModule_Type;
+    ApswModuleType.tp_basicsize = PyModule_Type.tp_basicsize;
+
+    if (PyType_Ready(&ApswModuleType) < 0)
+    {
+      ApswModuleType.tp_base = NULL;
+      goto fail;
+    }
+  }
+
   if (PyType_Ready(&ConnectionType) < 0 || PyType_Ready(&APSWCursorType) < 0 || PyType_Ready(&ZeroBlobBindType) < 0
       || PyType_Ready(&APSWBlobType) < 0 || PyType_Ready(&APSWVFSType) < 0 || PyType_Ready(&APSWVFSFileType) < 0
       || PyType_Ready(&apswfcntl_pragma_Type) < 0 || PyType_Ready(&APSWURIFilenameType) < 0
       || PyType_Ready(&FunctionCBInfoType) < 0 || PyType_Ready(&APSWBackupType) < 0
       || PyType_Ready(&SqliteIndexInfoType) < 0 || PyType_Ready(&apsw_no_change_type) < 0
       || PyType_Ready(&APSWFTS5TokenizerType) < 0 || PyType_Ready(&APSWFTS5ExtensionAPIType) < 0
-      || PyType_Ready(&PyObjectBindType) < 0
+      || PyType_Ready(&PyObjectBindType) < 0 || PyType_Ready(&BoxedCallType) < 0
 #ifdef SQLITE_ENABLE_CARRAY
       || PyType_Ready(&CArrayBindType) < 0
 #endif
@@ -2003,6 +2076,11 @@ PyInit_apsw(void)
   if (m == NULL)
     goto fail;
 
+  Py_SET_TYPE(apswmodule, &ApswModuleType);
+
+  if (PyModule_AddFunctions(m, apswmoduledef.m_methods) < 0)
+    goto fail;
+
   the_connections = PyList_New(0);
   if (!the_connections)
     goto fail;
@@ -2017,9 +2095,8 @@ PyInit_apsw(void)
 #define ADD(name, item)                                                                                                \
   do                                                                                                                   \
   {                                                                                                                    \
-    if (PyModule_AddObject(m, #name, (PyObject *)&item))                                                               \
+    if (PyModule_AddObjectRef(m, #name, (PyObject *)&item))                                                            \
       goto fail;                                                                                                       \
-    Py_INCREF(&item);                                                                                                  \
   } while (0)
 
   ADD(Connection, ConnectionType);
@@ -2093,10 +2170,10 @@ PyInit_apsw(void)
       */
 
 #ifdef APSW_USE_SQLITE_AMALGAMATION
-  if (PyModule_AddObject(m, "using_amalgamation", Py_NewRef(Py_True)))
+  if (PyModule_AddObjectRef(m, "using_amalgamation", Py_True))
     goto fail;
 #else
-  if (PyModule_AddObject(m, "using_amalgamation", Py_NewRef(Py_False)))
+  if (PyModule_AddObjectRef(m, "using_amalgamation", Py_False))
     goto fail;
 #endif
 
@@ -2110,6 +2187,62 @@ PyInit_apsw(void)
 
 #endif
 
+  /** .. attribute:: async_controller
+    :type: type[AsyncConnectionController]
+
+    This sets the controller for :meth:`Connection.as_async`.  It will use
+    :func:`apsw.aio.Auto` if not explicitly set.
+  */
+  /* we can't PyImport_ImportModuleAttr here to set apsw.aio.Auto as the
+     default because calling that results in a RecursionError because apsw
+     is in the middle of being imported */
+  if (!async_controller_context_var)
+    if (NULL == (async_controller_context_var = PyContextVar_New("apsw.async_controller", Py_None)))
+      goto fail;
+
+  if (PyModule_AddObjectRef(m, "async_controller", async_controller_context_var))
+    goto fail;
+
+  /** .. attribute:: async_run_coro
+    :type: Callable[[Coroutine], Any]
+
+    When APSW encounters a :class:`~typing.Coroutine` this called to run
+    it and block until getting the result.  The callable would typically
+    have the coroutine run in the event loop.  See :doc:`async` for
+    details.
+
+    This is a per-thread value.
+  */
+
+  if (!async_run_coro_sentinel)
+    if (NULL == (async_run_coro_sentinel = PyBaseObject_Type.tp_alloc(&PyBaseObject_Type, 0)))
+      goto fail;
+
+  if (PyModule_AddObjectRef(m, "async_run_coro", Py_None))
+    goto fail;
+
+  /** .. attribute:: async_cursor_prefetch
+    :type: contextvars.ContextVar[int]
+
+    When iterating on a :class:`Cursor` in async mode, it is more
+    efficient to get multiple result rows at once.  This controls how many
+    that is.  The default is 64 if not set. See :doc:`async` for details.
+    Typical usage is:
+
+    .. code-block:: python
+
+      with apsw.aio.contextvar_set(apsw.async_cursor_prefetch, 1):
+        async for row in await db.execute("SELECT ..."):
+            print(f"{row=})
+  */
+
+  if (!async_cursor_prefetch_context_var)
+    if (NULL == (async_cursor_prefetch_context_var = PyContextVar_New("apsw.async_cursor_prefetch", Py_None)))
+      goto fail;
+
+  if (PyModule_AddObjectRef(m, "async_cursor_prefetch", async_cursor_prefetch_context_var))
+    goto fail;
+
   /** .. attribute:: no_change
     :type: object
 
@@ -2119,27 +2252,27 @@ PyInit_apsw(void)
     and :class:`PreUpdate.update`.
   */
 
-  if(!apsw_no_change_object)
+  if (!apsw_no_change_object)
   {
     apsw_no_change_object = _PyObject_New(&apsw_no_change_type);
-    if(!apsw_no_change_object)
+    if (!apsw_no_change_object)
       goto fail;
   }
 
-  if (PyModule_AddObject(m, "no_change", Py_NewRef(apsw_no_change_object)))
+  if (PyModule_AddObjectRef(m, "no_change", apsw_no_change_object))
     goto fail;
 
   /* undocumented sentinel to do no bindings */
   if (!apsw_cursor_null_bindings)
-    apsw_cursor_null_bindings = PyObject_CallObject((PyObject *)&PyBaseObject_Type, NULL);
+    apsw_cursor_null_bindings = PyObject_CallNoArgs((PyObject *)&PyBaseObject_Type);
   if (!apsw_cursor_null_bindings)
     goto fail;
 
-  if (PyModule_AddObject(m, "_null_bindings", Py_NewRef(apsw_cursor_null_bindings)))
+  if (PyModule_AddObjectRef(m, "_null_bindings", apsw_cursor_null_bindings))
     goto fail;
 
 #ifdef APSW_FAULT_INJECT
-  if (PyModule_AddObject(m, "apsw_fault_inject", Py_NewRef(Py_True)))
+  if (PyModule_AddObjectRef(m, "apsw_fault_inject", Py_True))
     goto fail;
 #endif
 
@@ -2177,14 +2310,9 @@ modules etc. For example::
 
   if (!PyErr_Occurred())
   {
-    PyObject *mod = PyImport_ImportModule("collections.abc");
-    if (mod)
-    {
-      collections_abc_Mapping = PyObject_GetAttrString(mod, "Mapping");
-      Py_DECREF(mod);
-    }
-    /* should always have succeeded */
-    if(!mod || !collections_abc_Mapping)
+    collections_abc_Mapping = PyImport_ImportModuleAttr(apst.collections_abc, apst.Mapping);
+
+    if (!collections_abc_Mapping)
       goto fail;
   }
 
@@ -2192,6 +2320,7 @@ modules etc. For example::
 
   if (!PyErr_Occurred())
   {
+    module_is_initialized = 1;
     return m;
   }
 

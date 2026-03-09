@@ -1,0 +1,218 @@
+{
+    "amatch": {
+        "description": "Approximate matches virtual table",
+        "type": "extension"
+    },
+    "anycollseq": {
+        "description": "Fake fallback collating function for any unknown collating sequence",
+        "type": "extension"
+    },
+    "appendvfs": {
+        "description": "A VFS shim that allows an SQLite database to be appended onto the end of some other file, such as an executable",
+        "type": "extension"
+    },
+    "base64": {
+        "description": "Convert either direction between base64 blob and text",
+        "type": "extension"
+    },
+    "base85": {
+        "description": "Convert either direction between base85 blob and text",
+        "type": "extension"
+    },
+    "btreeinfo": {
+        "description": "btreeinfo virtual table that shows information about all btrees in an SQLite database file",
+        "type": "extension"
+    },
+    "cksumvfs": {
+        "description": "A VFS shim that writes a checksum on each page of an SQLite database file",
+        "type": "extension"
+    },
+    "closure": {
+        "description": "A virtual table that finds the transitive closure of a parent/child relationship in a real table",
+        "type": "extension"
+    },
+    "completion": {
+        "description": "A virtual table that returns suggested completions for a partial SQL input",
+        "type": "extension"
+    },
+    "csv": {
+        "description": "A virtual table for reading CSV files",
+        "type": "extension"
+    },
+    "decimal": {
+        "description": "Routines to implement arbitrary-precision decimal math",
+        "type": "extension"
+    },
+    "eval": {
+        "description": "Implements SQL function eval() which runs SQL statements recursively",
+        "type": "extension"
+    },
+    "fileio": {
+        "description": "Implements SQL functions readfile() and writefile(), and eponymous virtual type 'fsdir'",
+        "type": "extension"
+    },
+    "fuzzer": {
+        "description": "Virtual table that generates variations on an input word at increasing edit distances from the original",
+        "type": "extension"
+    },
+    "ieee754": {
+        "description": "functions for the exact display* and input of IEEE754 Binary64 floating-point numbers",
+        "type": "extension"
+    },
+    "memstat": {
+        "description": "Provides SQL access to the sqlite3_status64() and sqlite3_db_status() interfaces",
+        "type": "extension"
+    },
+    "nextchar": {
+        "description": "Finds all valid 'next' characters for a string given a vocabulary",
+        "type": "extension"
+    },
+    "noop": {
+        "description": "Implements noop() functions useful for testing",
+        "type": "extension"
+    },
+    "prefixes": {
+        "description": "Table valued function providing all prefixes of a string",
+        "type": "extension"
+    },
+    "randomjson": {
+        "description": "Generates random json objects",
+        "type": "extension"
+    },
+    "regexp": {
+        "description": "Compact reasonably efficient posix extended regular expression matcher",
+        "type": "extension"
+    },
+    "rot13": {
+        "description": "rot13 function and collating sequence",
+        "type": "extension"
+    },
+    "sha1": {
+        "description": "SHA1 hash and query results hash",
+        "type": "extension"
+    },
+    "shathree": {
+        "description": "SHA3 hash and query results hash",
+        "type": "extension"
+    },
+    "spellfix": {
+        "description": "Search a large vocabulary for close matches",
+        "type": "extension"
+    },
+    "sqlite3_dbdump": {
+        "description": "Converts the content of a SQLite database into UTF-8 text SQL statements that can be used to exactly recreate the original database",
+        "type": "executable"
+    },
+    "sqlite3_dbhash": {
+        "description": "Computes SHA1 of the contents of a SQLite database",
+        "type": "executable"
+    },
+    "sqlite3_dbtotxt": {
+        "description": "Converts a binary file like a database into a friendly human readable text format",
+        "type": "executable"
+    },
+    "sqlite3_diff": {
+        "description": "Displays content differences between SQLite databases",
+        "type": "executable"
+    },
+    "sqlite3_expert": {
+        "description": "A simple system to propose useful indexes given a database and a set of SQL queries",
+        "type": "executable"
+    },
+    "sqlite3_getlock": {
+        "description": "Unix only shows if and who is holding a database lock",
+        "type": "executable"
+    },
+    "sqlite3_index_usage": {
+        "description": "Given a database and a log database, shows how many times each index is used",
+        "type": "executable"
+    },
+    "sqlite3_normalize": {
+        "description": "Normalizes SQL text so private information can be removed, and to identify structurally identical queries",
+        "type": "executable"
+    },
+    "sqlite3_offsets": {
+        "description": "Shows length and offset for every TEXT or BLOB for a column of a table",
+        "type": "executable"
+    },
+    "sqlite3_rsync": {
+        "description": "Database Remote-Copy Tool",
+        "type": "executable"
+    },
+    "sqlite3_scrub": {
+        "description": "Makes a backup zeroing out all deleted content",
+        "type": "executable"
+    },
+    "sqlite3_shell": {
+        "description": "Command line shell",
+        "type": "executable"
+    },
+    "sqlite3_showdb": {
+        "description": "Prints low level details about a database file",
+        "type": "executable"
+    },
+    "sqlite3_showjournal": {
+        "description": "Prints low level content of a journal",
+        "type": "executable"
+    },
+    "sqlite3_showlocks": {
+        "description": "Shows all posix advisory locks on a file",
+        "type": "executable"
+    },
+    "sqlite3_showshm": {
+        "description": "Shows low level content of shm and wal-index files",
+        "type": "executable"
+    },
+    "sqlite3_showstat4": {
+        "description": "Shows contents of stat4 index of a database",
+        "type": "executable"
+    },
+    "sqlite3_showtmlog": {
+        "description": "Makes human/csv readable output from a tmstmpvfs log file",
+        "type": "executable"
+    },
+    "sqlite3_showwal": {
+        "description": "Shows low level content of a WAL file",
+        "type": "executable"
+    },
+    "stmt": {
+        "description": "Virtual table with information about all prepared statements on a connection",
+        "type": "extension"
+    },
+    "stmtrand": {
+        "description": "Function that returns the same sequence of random integers is returned for each invocation of the statement",
+        "type": "extension"
+    },
+    "tmstmpvfs": {
+        "description": "VFS shim that writes timestamps and other tracing information to the reserved bytes of each page, and also generates corresponding log files",
+        "type": "extension"
+    },
+    "uint": {
+        "description": "UINT collating sequence",
+        "type": "extension"
+    },
+    "unionvtab": {
+        "description": "Virtual table combining underlying tables from other databases",
+        "type": "extension"
+    },
+    "uuid": {
+        "description": "uuid functions",
+        "type": "extension"
+    },
+    "vec1": {
+        "description": "Vector search.  !Experimental! !Under development!",
+        "type": "extension"
+    },
+    "vfsstat": {
+        "description": "VFS shim tracking call statistics",
+        "type": "extension"
+    },
+    "vtablog": {
+        "description": "Virtual table printing diagnostic information for interactive analysis and debugging",
+        "type": "extension"
+    },
+    "zorder": {
+        "description": "Functions for z-order (Morton code) transformations",
+        "type": "extension"
+    }
+}

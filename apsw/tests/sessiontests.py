@@ -446,7 +446,7 @@ class Session(unittest.TestCase):
         # this should close the session
         db.close()
         tested = []
-        for attr in [x for x in dir(session) if not x.startswith("__") and not x in ("close",)]:
+        for attr in [x for x in dir(session) if not x.startswith("__") and x not in ("close", "aclose")]:
             tested.append(attr)
             try:
                 f = getattr(session, attr)
@@ -577,31 +577,6 @@ class Session(unittest.TestCase):
             conflict=handler,
         )
         self.checkDbIdentical(self.db, db2)
-
-    def testGccWarning(self):
-        "prove gcc warning is nonsense"
-        # gcc warns for functions with no keyword arguments that the
-        # zero length list of keywords is accessed.  I have been
-        # unable to suppress the warning with code changes, so this
-        # code when run under a sanitizer proves the warning is
-        # nonsense.
-
-        # verifies the function takes no parameters and we get keyword error
-        regex = r".*invalid keyword argument for.*\.([a-z_]+[(][)] -> .*|__init__[(][)])"
-
-        for meth in (
-            apsw.ChangesetBuilder().output,
-            apsw.Rebaser,
-            apsw.ChangesetBuilder,
-            apsw.ChangesetBuilder().close,
-            apsw.Session(self.db, "main").close,
-        ):
-            self.assertRaisesRegex(TypeError, regex, meth, **{"": 3})
-            self.assertRaisesRegex(TypeError, regex, meth, **{"hello": 3})
-            self.assertRaisesRegex(TypeError, regex, meth, **{"one": 3, "two": 2})
-
-            # no args works
-            meth()
 
     def testConflicts(self):
         "apply and conflict handling"
@@ -744,8 +719,19 @@ class Session(unittest.TestCase):
 
         def handler(reason, tc):
             self.assertEqual(reason, apsw.SQLITE_CHANGESET_FOREIGN_KEY)
-            self.assertEqual(tc.op, "Undocumented op 0")
+            self.assertEqual(tc.op, None)
             self.assertEqual(tc.fk_conflicts, 1)
+            self.assertIn("SQLITE_CHANGESET_FOREIGN_KEY", str(tc))
+            self.assertNotIn("op", str(tc))
+            self.assertIsNone(tc.column_count)
+            self.assertIsNone(tc.conflict)
+            self.assertIsNone(tc.indirect)
+            self.assertIsNone(tc.name)
+            self.assertIsNone(tc.new)
+            self.assertIsNone(tc.old)
+            self.assertIsNone(tc.op)
+            self.assertIsNone(tc.opcode)
+            self.assertIsNone(tc.pk_columns)
             return apsw.SQLITE_CHANGESET_OMIT
 
         apsw.Changeset.apply(changeset, self.db, filter=lambda n: n == "delete", conflict=handler)

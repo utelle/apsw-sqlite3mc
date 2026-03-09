@@ -17,6 +17,9 @@ include LICENSE
 include checksums
 include setup.py
 
+# builds sqlite_extra
+include tools/vend.py
+
 # Long description comes from this
 include README.rst
 

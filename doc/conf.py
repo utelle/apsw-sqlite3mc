@@ -25,6 +25,34 @@ extensions = [
     "sphinx.ext.autosummary",
 ]
 
+if not os.getenv("APSW_NO_GA"):
+    extensions.append("sphinxcontrib.googleanalytics")
+    googleanalytics_id = "G-2NR9GDCQLT"
+
+
+# how we link to various things
+rst_prolog = """
+.. |anyio| replace:: :external+anyio:doc:`anyio <index>` (:ref:`note <anyio_note>`)
+
+.. |uvloop| replace:: `uvloop <https://uvloop.readthedocs.io/>`__
+
+.. |trio| replace:: :external+trio:doc:`trio <index>` (:ref:`note <trio_note>`)
+
+.. |aiosqlite| replace:: `aiosqlite <https://aiosqlite.omnilib.dev/en/stable/>`__
+
+.. |badge-async-sync| replace::  :ref:`Sync only <badge_async_sync>`
+
+.. |badge-async-async| replace::  :ref:`Async only <badge_async_async>`
+
+.. |badge-async-dual| replace::  :ref:`Sync / Async <badge_async_dual>`
+
+.. |badge-async-value| replace::  :ref:`Value <badge_async_value>`
+
+.. |badge-close| replace:: :ref:`Close <badge_close>`
+
+"""
+
+
 # this shows shorter names like Buffer instead of collections.abc.Buffer
 python_use_unqualified_type_names = True
 # less verbose Literal [ "one", "two"] -> "one" : "two"
@@ -37,7 +65,11 @@ extlinks = {
     "source": ("https://github.com/rogerbinns/apsw/blob/master/%s", "%s"),
 }
 
-intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "trio": (" https://trio.readthedocs.io/en/stable/", None),
+    "anyio": (" https://anyio.readthedocs.io/en/stable/", None),
+    }
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -81,13 +113,10 @@ extlinks_detect_hardcoded_links = True
 html_title = f"{ project } { version } documentation"
 html_theme = "sphinx_rtd_theme"
 html_theme_options = {
-    "analytics_id": "G-2NR9GDCQLT",
     "prev_next_buttons_location": "both",
 }
 html_css_files = ["apsw.css"]
-
-if os.getenv("APSW_NO_GA"):
-    del html_theme_options["analytics_id"]
+html_baseurl = "https://rogerbinns.github.io/apsw/"
 
 html_favicon = "favicon.ico"
 
@@ -136,7 +165,15 @@ def setup(app):
 
 nitpicky = True
 
+nitpick_ignore = [
+    ('py:class', 'apsw.aio.T'),
+    # private
+    ('py:class', 'apsw.aio._CallTracker'),
+    # gets confused by C extension
+    ('py:class', '_queue.SimpleQueue'),
+]
+
 # autosummary etc fail to import modules even though python import
 # works just fine, so we cheat by importing them here
 
-import apsw
+import apsw, apsw.aio

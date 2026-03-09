@@ -489,7 +489,7 @@ SqliteIndexInfo_set_idxNum(PyObject *self, PyObject *value, void *Py_UNUSED(unus
 }
 
 /** .. attribute:: idxStr
-  :type: Optional[str]
+  :type: str | None
 
   Name used to identify the index
 */
@@ -931,7 +931,7 @@ finally: /* cleanup */
   return res;
 }
 
-/** .. method:: Connect(connection: Connection, modulename: str, databasename: str, tablename: str, *args: tuple[SQLiteValue, ...])  -> tuple[str, VTTable]
+/** .. method:: Connect(connection: Connection, modulename: str, databasename: str, tablename: str, *args: SQLiteValues)  -> tuple[str, VTTable]
 
     The parameters and return are identical to
     :meth:`~VTModule.Create`.  This method is called
@@ -962,7 +962,7 @@ apswvtabCreate(sqlite3 *db, void *pAux, int argc, const char *const *argv, sqlit
                                  "VirtualTable.xCreate.sqlite3_declare_vtab", "VirtualTable.xCreate");
 }
 
-/** .. method:: Create(connection: Connection, modulename: str, databasename: str, tablename: str, *args: tuple[SQLiteValue, ...])  -> tuple[str, VTTable]
+/** .. method:: Create(connection: Connection, modulename: str, databasename: str, tablename: str, *args: SQLiteValues)  -> tuple[str, VTTable]
 
    Called when a table is first created on a :class:`connection
    <Connection>`.
@@ -1799,7 +1799,7 @@ finally:
 
   :param rowid: 64 bit integer
 */
-/** .. method:: UpdateInsertRow(rowid: Optional[int], fields: tuple[SQLiteValue, ...])  -> Optional[int]
+/** .. method:: UpdateInsertRow(rowid: int | None, fields: SQLiteValues)  -> int | None
 
   Insert a row with the specified *rowid*.
 
@@ -1810,7 +1810,7 @@ finally:
     to the row.  If *rowid* was not *None* then the return value
     is ignored.
 */
-/** .. method:: UpdateChangeRow(row: int, newrowid: int, fields: tuple[SQLiteValue, ...]) -> None
+/** .. method:: UpdateChangeRow(row: int, newrowid: int, fields: SQLiteValues) -> None
 
   Change an existing row.  You may also need to change the rowid - for example if the query was
   ``UPDATE table SET rowid=rowid+100 WHERE ...``
@@ -2295,7 +2295,7 @@ track of where in the table it is.
 
 */
 
-/** .. method:: Filter(indexnum: int, indexname: str, constraintargs: Optional[tuple]) -> None
+/** .. method:: Filter(indexnum: int, indexname: str, constraintargs: tuple | None) -> None
 
   This method is always called first to initialize an iteration to the
   first row of the table. The arguments come from the
@@ -2418,12 +2418,7 @@ finally:
     supported types <types>`
 */
 
-/*
-  Tt would be ideal for the return to be Union[SQLiteValue, apsw.no_change]
-  but that then requires apsw.no_change being documented as a class
-  which then confuses the documentation extractor.
-*/
-/** .. method:: ColumnNoChange(number: int) -> SQLiteValue
+/** .. method:: ColumnNoChange(number: int) -> SQLiteValue | apsw.no_change
 
   :meth:`VTTable.UpdateChangeRow` is going to be called which includes
   values for all columns.  However this column is not going to be changed

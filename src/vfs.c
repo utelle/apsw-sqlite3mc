@@ -318,7 +318,7 @@ typedef struct
 
 */
 
-/** .. method:: excepthook(etype: type[BaseException], evalue: BaseException, etraceback: Optional[types.TracebackType]) -> Any
+/** .. method:: excepthook(etype: type[BaseException] | None, evalue: BaseException | None, etraceback: types.TracebackType | None) -> bool
 
     Called when there has been an exception in a :class:`VFS` routine,
     and it can't be reported to the caller as usual.
@@ -662,9 +662,7 @@ apswvfs_xOpen(sqlite3_vfs *vfs, const char *zName, sqlite3_file *file, int infla
      object supports version 2 io_methods (Shm* family of functions)
      then we need to allocate an io_methods dupe of our own and fill
      in their shm methods. */
-  int is_file = PyObject_IsInstance(pyresult, (PyObject *)&APSWVFSFileType) == 1;
-  if (PyErr_Occurred())
-    goto finally;
+  int is_file = PyObject_TypeCheck(pyresult, &APSWVFSFileType) == 1;
   if (is_file)
   {
     APSWVFSFile *f = (APSWVFSFile *)pyresult;
@@ -692,7 +690,7 @@ finally:
   return result;
 }
 
-/** .. method:: xOpen(name: Optional[str | URIFilename], flags: list[int,int]) -> VFSFile
+/** .. method:: xOpen(name: str | URIFilename | None, flags: list[int,int]) -> VFSFile
 
     This method should return a new file object based on name.  You
     can return a :class:`VFSFile` from a completely different VFS.
@@ -815,7 +813,7 @@ apswvfs_xDlOpen(sqlite3_vfs *vfs, const char *zName)
   {
     if (PyLong_Check(pyresult) && PyLong_AsDouble(pyresult) >= 0)
       result = PyLong_AsVoidPtr(pyresult);
-    else
+    else if (!PyErr_Occurred())
       PyErr_Format(PyExc_TypeError, "Pointer returned must be int and non-negative");
   }
   if (PyErr_Occurred())
@@ -1013,8 +1011,11 @@ apswvfs_xDlError(sqlite3_vfs *vfs, int nByte, char *zErrMsg)
       {
         if (utf8len > (Py_ssize_t)nByte - 1)
           utf8len = (Py_ssize_t)nByte - 1;
-        memcpy(zErrMsg, utf8, utf8len);
-        zErrMsg[utf8len] = 0;
+        if (zErrMsg && utf8len > 0)
+        {
+          memcpy(zErrMsg, utf8, utf8len);
+          zErrMsg[utf8len] = 0;
+        }
       }
     }
     else
@@ -1090,33 +1091,36 @@ apswvfs_xRandomness(sqlite3_vfs *vfs, int nByte, char *zOut)
   int result = 0;
   VFSPREAMBLE;
 
-  PyObject *vargs[] = { NULL, (PyObject *)(vfs->pAppData), PyLong_FromLong(nByte) };
-  if (vargs[2])
-    pyresult = PyObject_VectorcallMethod(apst.xRandomness, vargs + 1, 2 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
-  Py_XDECREF(vargs[2]);
-
-  if (pyresult && !Py_IsNone(pyresult))
+  if (zOut && nByte > 0)
   {
-    int asrb;
-    Py_buffer py3buffer;
-    Py_ssize_t len;
+    PyObject *vargs[] = { NULL, (PyObject *)(vfs->pAppData), PyLong_FromLong(nByte) };
+    if (vargs[2])
+      pyresult = PyObject_VectorcallMethod(apst.xRandomness, vargs + 1, 2 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
+    Py_XDECREF(vargs[2]);
 
-    asrb = PyObject_GetBufferContiguous(pyresult, &py3buffer, PyBUF_SIMPLE);
-    if (asrb == 0)
+    if (pyresult && !Py_IsNone(pyresult))
     {
-      len = py3buffer.len;
-      if (len > nByte)
-        len = nByte;
-      memcpy(zOut, py3buffer.buf, len);
-      result = len;
-      PyBuffer_Release(&py3buffer);
-    }
-    else
-      assert(PyErr_Occurred());
-  }
+      int asrb;
+      Py_buffer py3buffer;
+      Py_ssize_t len;
 
-  if (PyErr_Occurred())
-    AddTraceBackHere(__FILE__, __LINE__, "vfs.xRandomness", "{s: i, s: O}", "nByte", nByte, "result", OBJ(pyresult));
+      asrb = PyObject_GetBufferContiguous(pyresult, &py3buffer, PyBUF_SIMPLE);
+      if (asrb == 0)
+      {
+        len = py3buffer.len;
+        if (len > nByte)
+          len = nByte;
+        memcpy(zOut, py3buffer.buf, len);
+        result = len;
+        PyBuffer_Release(&py3buffer);
+      }
+      else
+        assert(PyErr_Occurred());
+    }
+
+    if (PyErr_Occurred())
+      AddTraceBackHere(__FILE__, __LINE__, "vfs.xRandomness", "{s: i, s: O}", "nByte", nByte, "result", OBJ(pyresult));
+  }
 
   Py_XDECREF(pyresult);
   VFSPOSTAMBLE;
@@ -1389,9 +1393,9 @@ apswvfs_xGetLastError(sqlite3_vfs *vfs, int nByte, char *zErrMsg)
     utf8 = PyUnicode_AsUTF8AndSize(item1, &utf8len);
     if (utf8)
     {
-      /* Get size includes trailing null */
+      /* Get size */
       size_t len = utf8len;
-      if (zErrMsg && len > 0)
+      if (zErrMsg && len > 0 && nByte > 0)
       {
         if (len > (size_t)nByte)
           len = (size_t)nByte;
@@ -1503,7 +1507,7 @@ apswvfs_xSetSystemCall(sqlite3_vfs *vfs, const char *zName, sqlite3_syscall_ptr 
   return res;
 }
 
-/** .. method:: xSetSystemCall(name: Optional[str], pointer: int) -> bool
+/** .. method:: xSetSystemCall(name: str | None, pointer: int) -> bool
 
     Change a system call used by the VFS.  This is useful for testing
     and some other scenarios such as sandboxing.
@@ -1587,7 +1591,7 @@ apswvfs_xGetSystemCall(sqlite3_vfs *vfs, const char *zName)
   return ptr;
 }
 
-/** .. method:: xGetSystemCall(name: str) -> Optional[int]
+/** .. method:: xGetSystemCall(name: str) -> int | None
 
     Returns a pointer for the current method implementing the named
     system call.  Return None if the call does not exist.
@@ -1624,7 +1628,7 @@ apswvfs_xNextSystemCall(sqlite3_vfs *vfs, const char *zName)
   const char *res = NULL;
 
   VFSPREAMBLE;
-  PyObject *vargs[] = { NULL, (PyObject *)(vfs->pAppData), PyUnicode_FromString(zName) };
+  PyObject *vargs[] = { NULL, (PyObject *)(vfs->pAppData), zName ? PyUnicode_FromString(zName) : Py_NewRef(Py_None) };
   if (vargs[2])
     pyresult = PyObject_VectorcallMethod(apst.xNextSystemCall, vargs + 1, 2 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
   Py_XDECREF(vargs[2]);
@@ -1647,7 +1651,7 @@ apswvfs_xNextSystemCall(sqlite3_vfs *vfs, const char *zName)
   return res;
 }
 
-/** .. method:: xNextSystemCall(name: Optional[str]) -> Optional[str]
+/** .. method:: xNextSystemCall(name: str | None) -> str | None
 
     This method is repeatedly called to iterate over all of the system
     calls in the vfs.  When called with None you should return the
@@ -1756,7 +1760,7 @@ APSWVFS_dealloc(PyObject *self_)
   Py_TpFree(self_);
 }
 
-/** .. method:: __init__(name: str, base: Optional[str] = None, makedefault: bool = False, maxpathname: int = 1024, *, iVersion: int = 3, exclude: Optional[set[str]] = None)
+/** .. method:: __init__(name: str, base: str | None = None, makedefault: bool = False, maxpathname: int = 1024, *, iVersion: int = 3, exclude: set[str] | None = None)
 
     :param name: The name to register this vfs under.  If the name
         already exists then this vfs will replace the prior one of the
@@ -1906,15 +1910,15 @@ error:
 }
 
 static PyObject *
-APSWVFS_tp_str(PyObject *self_)
+APSWVFS_tp_repr(PyObject *self_)
 {
   APSWVFS *self = (APSWVFS *)self_;
   if (!self->containingvfs)
-    return PyUnicode_FromFormat("<apsw.VFS object at %p>", self);
+    return PyUnicode_FromFormat("<%s object at %p>", Py_TypeName(self_), self);
   if (self->basevfs)
-    return PyUnicode_FromFormat("<apsw.VFS object \"%s\" inherits from \"%s\" at %p>", self->containingvfs->zName,
-                                self->basevfs->zName, self);
-  return PyUnicode_FromFormat("<apsw.VFS object \"%s\" at %p>", self->containingvfs->zName, self);
+    return PyUnicode_FromFormat("<%s \"%s\" inherits from \"%s\" at %p>", Py_TypeName(self_),
+                                self->containingvfs->zName, self->basevfs->zName, self);
+  return PyUnicode_FromFormat("<%s \"%s\" at %p>", Py_TypeName(self_), self->containingvfs->zName, self);
 }
 
 static PyMethodDef APSWVFS_methods[] = {
@@ -1949,7 +1953,8 @@ static PyTypeObject APSWVFSType = {
   .tp_methods = APSWVFS_methods,
   .tp_init = APSWVFS_init,
   .tp_new = PyType_GenericNew,
-  .tp_str = APSWVFS_tp_str,
+  .tp_str = NULL,
+  .tp_repr = APSWVFS_tp_repr,
 };
 
 static int
@@ -1969,7 +1974,7 @@ is_apsw_vfs(sqlite3_vfs *vfs)
 
 */
 
-/** .. method:: excepthook(etype: type[BaseException], evalue: BaseException, etraceback: Optional[types.TracebackType]) ->None
+/** .. method:: excepthook(etype: type[BaseException] | None, evalue: BaseException | None, etraceback: types.TracebackType | None) -> bool
 
     Called when there has been an exception in a :class:`VFSFile`
     routine, and it can't be reported to the caller as usual.
@@ -2822,12 +2827,9 @@ apswvfsfile_xFileControl(sqlite3_file *file, int op, void *pArg)
 
     PyErr_Clear();
 
-    PyObject *module = PyObject_GetAttrString((PyObject *)Py_TYPE(apswfile->file), "__module__");
+    PyObject *module = PyObject_GetAttr((PyObject *)Py_TYPE(apswfile->file), apst.s_module);
     if (module && PyUnicode_Check(module))
-    {
       modname = PyUnicode_AsUTF8(module);
-      PyErr_Clear();
-    }
 
     /* the above calls could have exceptions but they aren't useful,
        so ignore */
@@ -2958,8 +2960,7 @@ apswvfsfile_xClose(sqlite3_file *file)
   else
     result = SQLITE_OK;
 
-  Py_XDECREF(apswfile->file);
-  apswfile->file = NULL;
+  Py_CLEAR(apswfile->file);
   Py_XDECREF(pyresult);
   FILEPOSTAMBLE;
   return result;
@@ -2999,11 +3000,11 @@ apswvfsfilepy_xClose(PyObject *self_, PyObject *Py_UNUSED(unused))
 }
 
 static PyObject *
-APSWVFSFile_tp_str(PyObject *self_)
+APSWVFSFile_tp_repr(PyObject *self_)
 {
   APSWVFSFile *self = (APSWVFSFile *)self_;
-  return PyUnicode_FromFormat("<apsw.VFSFile object filename \"%s\" at %p>", self->filename ? self->filename : "(nil)",
-                              self);
+  return PyUnicode_FromFormat("<%s filename \"%s\" at %p>", Py_TypeName(self_),
+                              self->filename ? self->filename : "(nil)", self);
 }
 
 #define APSWPROXYBASE                                                                                                  \
@@ -3107,7 +3108,8 @@ static PyTypeObject APSWVFSFileType = {
   .tp_methods = APSWVFSFile_methods,
   .tp_init = APSWVFSFile_init,
   .tp_new = PyType_GenericNew,
-  .tp_str = APSWVFSFile_tp_str,
+  .tp_str = NULL,
+  .tp_repr = APSWVFSFile_tp_repr,
 };
 
 /** .. class:: URIFilename
@@ -3183,7 +3185,7 @@ fail:
   return NULL;
 }
 
-/** .. method:: uri_parameter(name: str) -> Optional[str]
+/** .. method:: uri_parameter(name: str) -> str | None
 
     Returns the value of parameter `name` or None.
 
@@ -3264,13 +3266,13 @@ apswurifilename_uri_boolean(PyObject *self_, PyObject *const *fast_args, Py_ssiz
 }
 
 static PyObject *
-apswurifilename_tp_str(PyObject *self_)
+apswurifilename_tp_repr(PyObject *self_)
 {
   APSWURIFilename *self = (APSWURIFilename *)self_;
   /* CHECK_SCOPE not needed since we manually check */
   if (!self->filename)
-    return PyUnicode_FromFormat("<apsw.URIFilename object (out of scope) at %p>", self);
-  return PyUnicode_FromFormat("<apsw.URIFilename object \"%s\" at %p>", self->filename, self);
+    return PyUnicode_FromFormat("<%s (out of scope) at %p>", Py_TypeName(self_), self);
+  return PyUnicode_FromFormat("<%s \"%s\" at %p>", Py_TypeName(self_), self->filename, self);
 }
 
 static PyMethodDef APSWURIFilenameMethods[]
@@ -3294,7 +3296,8 @@ static PyTypeObject APSWURIFilenameType = {
   .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
   .tp_doc = URIFilename_class_DOC,
   .tp_methods = APSWURIFilenameMethods,
-  .tp_str = apswurifilename_tp_str,
+  .tp_str = NULL,
+  .tp_repr = apswurifilename_tp_repr,
   .tp_getset = APSWURIFilename_getset,
 };
 

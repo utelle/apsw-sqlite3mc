@@ -114,15 +114,12 @@ init_exceptions(PyObject *m)
           { &ExcNoFTS5, "NoFTS5Error", NoFTS5Error_exc_DOC },
           { &ExcInvalidContext, "InvalidContextError", InvalidContextError_exc_DOC } };
 
-  /* PyModule_AddObject uses borrowed reference so we incref whatever
-     we give to it, so we still have a copy to use */
-
   /* custom ones first */
 
   APSWException = PyErr_NewExceptionWithDoc("apsw.Error", Error_exc_DOC, NULL, NULL);
   if (!APSWException)
     return -1;
-  if (PyModule_AddObject(m, "Error", Py_NewRef((PyObject *)APSWException)))
+  if (PyModule_AddObjectRef(m, "Error", (PyObject *)APSWException))
     return -1;
 
   for (i = 0; i < sizeof(apswexceptions) / sizeof(apswexceptions[0]); i++)
@@ -186,16 +183,14 @@ make_exception_with_message(int res, const char *errmsg, int error_offset)
   if (PyObject_SetAttr(exc, apst.result, tmp))
     goto error;
 
-  Py_DECREF(tmp);
-  tmp = PyLong_FromLongLong(res);
+  Py_SETREF(tmp, PyLong_FromLongLong(res));
   if (!tmp)
     goto error;
 
   if (PyObject_SetAttr(exc, apst.extendedresult, tmp))
     goto error;
-  Py_DECREF(tmp);
 
-  tmp = PyLong_FromLong(error_offset);
+  Py_SETREF(tmp, PyLong_FromLong(error_offset));
   if (!tmp)
     goto error;
 
@@ -244,15 +239,15 @@ MakeSqliteMsgFromPyException(char **errmsg)
     {
       res = exc_descriptors[i].code;
       /* do we have extended information available? */
-      if (PyObject_HasAttr(exc, apst.extendedresult))
+      PyObject *extended = PyObject_GetAttr(exc, apst.extendedresult);
+      if (extended)
       {
-        /* extract it */
-        PyObject *extended = PyObject_GetAttr(exc, apst.extendedresult);
-        if (extended && PyLong_Check(extended))
+        if (PyLong_Check(extended))
           res = PyLong_AsInt(extended);
-        Py_XDECREF(extended);
-        PyErr_Clear();
+        Py_DECREF(extended);
       }
+      PyErr_Clear();
+
       /* this can happen with inopportune failures in the above */
       if (res < 1)
         res = SQLITE_ERROR;

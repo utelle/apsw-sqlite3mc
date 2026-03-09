@@ -13,16 +13,23 @@
 
 #define VLA_PYO(name, size) VLA(name, size, PyObject *)
 
-/* use this most of the time where an exception is raised if we can't get the db mutex */
-#define DBMUTEX_ENSURE(mutex)                                                                                          \
+#define DBMUTEX_ENSURE_RETURN(check_thread, CONN, RETVAL)                                                              \
   do                                                                                                                   \
   {                                                                                                                    \
-    if (sqlite3_mutex_try(mutex) != SQLITE_OK)                                                                         \
+    if (check_thread)                                                                                                  \
+      assert(IN_WORKER_THREAD(CONN));                                                                                  \
+    if (sqlite3_mutex_try((CONN)->dbmutex) != SQLITE_OK)                                                               \
     {                                                                                                                  \
       make_thread_exception(NULL);                                                                                     \
-      return NULL;                                                                                                     \
+      return (RETVAL);                                                                                                 \
     }                                                                                                                  \
   } while (0)
+
+/* use this most of the time where an exception is raised if we can't get the db mutex */
+#define DBMUTEX_ENSURE(CONN) DBMUTEX_ENSURE_RETURN(1, (CONN), NULL)
+
+/* any thread can do it - used mainly for close */
+#define DBMUTEX_ENSURE_ANY_THREAD(CONN) DBMUTEX_ENSURE_RETURN(0, (CONN), NULL)
 
 #define DBMUTEXES_ENSURE(mutex1, msg1, mutex2, msg2)                                                                   \
   do                                                                                                                   \
@@ -40,27 +47,138 @@
     }                                                                                                                  \
   } while (0)
 
-/* use this when we have to get the dbmutex - eg in dealloc functions
-   - where we busy wait releasing gil until dbmutex is acquired.
-
-  a different thread could be running a sqlite3_step with the GIL
-  released and holding the mutex.  when it finishes it will want
-  the GIL so it can copy error messages etc, but we are holding the
-  GIL.  only after it has copied data into python will it then
-  release the db mutex.
-
-   if the fork checker is in use and this object was allocated in one
-   process and then freed in the next, it will busy loop forever
-   on SQLITE_MISUSE and spamming the unraisable exception hook with
-   forking violation */
-#define DBMUTEX_FORCE(mutex)                                                                                           \
+#define DBMUTEX_RETRY_2(conn1, conn2, func)                                                                            \
   do                                                                                                                   \
   {                                                                                                                    \
-    while (sqlite3_mutex_try(mutex) != SQLITE_OK)                                                                      \
+    sqlite3_mutex *mutex_one = NULL;                                                                                   \
+    if (conn1)                                                                                                         \
     {                                                                                                                  \
-      Py_BEGIN_ALLOW_THREADS Py_END_ALLOW_THREADS;                                                                     \
+      mutex_one = (conn1)->dbmutex;                                                                                    \
+      switch (sqlite3_mutex_try(mutex_one))                                                                            \
+      {                                                                                                                \
+      case SQLITE_MISUSE:                                                                                              \
+        PyErr_SetString(ExcForkingViolation,                                                                           \
+                        "SQLite object allocated in one process is being used in another (across a fork)");            \
+        return -1;                                                                                                     \
+      case SQLITE_BUSY:                                                                                                \
+        return apsw_AddPendingCall(func, self);                                                                        \
+      case SQLITE_OK:                                                                                                  \
+        break;                                                                                                         \
+      default:                                                                                                         \
+        Py_UNREACHABLE();                                                                                              \
+      }                                                                                                                \
+    }                                                                                                                  \
+    if (conn2)                                                                                                         \
+    {                                                                                                                  \
+      switch (sqlite3_mutex_try((conn2)->dbmutex))                                                                     \
+      {                                                                                                                \
+      case SQLITE_MISUSE:                                                                                              \
+        PyErr_SetString(ExcForkingViolation,                                                                           \
+                        "SQLite object allocated in one process is being used in another (across a fork)");            \
+        sqlite3_mutex_leave(mutex_one);                                                                                \
+        return -1;                                                                                                     \
+      case SQLITE_BUSY:                                                                                                \
+        sqlite3_mutex_leave(mutex_one);                                                                                \
+        return apsw_AddPendingCall(func, self);                                                                        \
+      case SQLITE_OK:                                                                                                  \
+        break;                                                                                                         \
+      default:                                                                                                         \
+        Py_UNREACHABLE();                                                                                              \
+      }                                                                                                                \
     }                                                                                                                  \
   } while (0)
+
+#define DBMUTEX_RETRY(connection, func) DBMUTEX_RETRY_2(connection, (Connection *)0, func)
+
+/* Py_AddPendingCall only has 32 slots so if we end up with more than
+   that many objects waiting mutex to destruct it returns errors.
+   Annoyingly this means having to manage our own list of pending calls.
+*/
+
+static size_t pending_call_slots_count = 0;
+typedef struct
+{
+  int (*func)(void *);
+  void *arg;
+} pending_call_entry;
+static pending_call_entry *pending_call_slots = 0;
+
+static int pending_call_registered = 0;
+
+static int
+pending_call_callback(void *ignored)
+{
+  assert(!PyErr_Occurred());
+
+  pending_call_registered = 0;
+
+  size_t ran = 0;
+
+  size_t i;
+  for (i = 0; i < pending_call_slots_count; i++)
+  {
+    if (pending_call_slots[i].func)
+    {
+      int (*func)(void *) = pending_call_slots[i].func;
+      void *arg = pending_call_slots[i].arg;
+      pending_call_slots[i].func = 0;
+      pending_call_slots[i].arg = 0;
+      ran++;
+      int res = func(arg);
+      assert((res == 0 && !PyErr_Occurred()) || (res != 0 && PyErr_Occurred()));
+      if (PyErr_Occurred())
+        apsw_write_unraisable(NULL);
+    }
+    else
+    {
+      assert(pending_call_slots[i].func == 0);
+      assert(pending_call_slots[i].arg == 0);
+    }
+  }
+
+  assert(!PyErr_Occurred());
+  return 0;
+}
+
+static int
+apsw_AddPendingCall(int (*func)(void *), void *arg)
+{
+  assert(func);
+  assert(arg);
+
+  int res = 0;
+
+  size_t i;
+  for (i = 0; i < pending_call_slots_count; i++)
+    if (!pending_call_slots[i].func)
+      break;
+  if (i == pending_call_slots_count)
+  {
+    pending_call_entry *pending_call_slots_new
+        = PyMem_Resize(pending_call_slots, pending_call_entry, pending_call_slots_count + 1);
+    if (!pending_call_slots_new)
+    {
+      res = -1;
+      goto exit;
+    }
+    pending_call_slots_count++;
+  }
+  pending_call_slots[i].func = func;
+  pending_call_slots[i].arg = arg;
+
+  if (!pending_call_registered)
+  {
+    res = Py_AddPendingCall(pending_call_callback, NULL);
+    if (res != 0)
+      PyErr_SetString(PyExc_RuntimeError,
+                      "APSW: Py_AddPendingCall failed which means destructors will not be able to complete");
+    else
+      pending_call_registered = 1;
+  }
+exit:
+  assert((res == 0 && !PyErr_Occurred()) || (res != 0 && PyErr_Occurred()));
+  return res;
+}
 
 /*
    The default Python PyErr_WriteUnraisable is almost useless, and barely used
@@ -83,7 +201,7 @@
 /* used for calling sys.unraisablehook */
 static PyStructSequence_Field apsw_unraisable_info_fields[]
     = { { "exc_type", "Exception type" },
-        { "exc_value", "Execption value, can be None" },
+        { "exc_value", "Exception value, can be None" },
         { "exc_traceback", "Exception traceback, can be None" },
         { "err_msg", "Error message, can be None" },
         { "object", "Object causing the exception, can be None" },
@@ -105,9 +223,6 @@ apsw_write_unraisable(PyObject *hookobject)
   PyObject *result = NULL;
 
   /* fill in the rest of the traceback */
-#ifdef PYPY_VERSION
-  /* do nothing */
-#else
   PyFrameObject *prev = NULL, *frame = PyThreadState_GetFrame(PyThreadState_GET());
   while (frame)
   {
@@ -116,19 +231,21 @@ apsw_write_unraisable(PyObject *hookobject)
     Py_DECREF(frame);
     frame = prev;
   }
-#endif
 
-  /* Get the exception details */
-  PY_ERR_FETCH(exc);
-  PY_ERR_NORMALIZE(exc);
+  /* Get the exception details - we have to use the legacy deprecated API because
+     unraisable hook structure has the three separate exception fields despite
+     Python 3.12 moving to a singe value */
+  PyObject *exc_type = NULL, *exc_value = NULL, *exc_traceback = NULL;
+  PyErr_Fetch(&exc_type, &exc_value, &exc_traceback);
+  PyErr_NormalizeException(&exc_type, &exc_value, &exc_traceback);
 
   /* tell sqlite3_log */
-  if (exc && 0 == Py_EnterRecursiveCall("apsw_write_unraisable forwarding to sqlite3_log"))
+  if (exc_value && 0 == Py_EnterRecursiveCall("apsw_write_unraisable forwarding to sqlite3_log"))
   {
-    PyObject *message = PyObject_Str(exc);
+    PyObject *message = PyObject_Str(exc_value);
     const char *utf8 = message ? PyUnicode_AsUTF8(message) : "failed to get string of error";
     PyErr_Clear();
-    sqlite3_log(SQLITE_ERROR, "apsw_write_unraisable %s: %s", Py_TYPE(exc)->tp_name, utf8);
+    sqlite3_log(SQLITE_ERROR, "apsw_write_unraisable %s: %s", Py_TypeName(OBJ(exc_value)), utf8);
     Py_CLEAR(message);
     Py_LeaveRecursiveCall();
   }
@@ -141,11 +258,7 @@ apsw_write_unraisable(PyObject *hookobject)
     PyErr_Clear();
     if (excepthook)
     {
-#if PY_VERSION_HEX < 0x030c0000
-      PyObject *vargs[] = { NULL, OBJ(exctype), OBJ(exc), OBJ(exctraceback) };
-#else
-      PyObject *vargs[] = { NULL, (PyObject *)Py_TYPE(OBJ(exc)), OBJ(exc), Py_None };
-#endif
+      PyObject *vargs[] = { NULL, OBJ(exc_type), OBJ(exc_value), OBJ(exc_traceback) };
       result = PyObject_Vectorcall(excepthook, vargs + 1, 3 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
       if (result)
         goto finally;
@@ -161,20 +274,19 @@ apsw_write_unraisable(PyObject *hookobject)
     PyObject *arg = PyStructSequence_New(&apsw_unraisable_info_type);
     if (arg)
     {
-#if PY_VERSION_HEX < 0x030c0000
-      PyStructSequence_SetItem(arg, 0, Py_NewRef(OBJ(exctype)));
-      PyStructSequence_SetItem(arg, 1, Py_NewRef(OBJ(exc)));
-      PyStructSequence_SetItem(arg, 2, Py_NewRef(OBJ(exctraceback)));
-#else
-      PyStructSequence_SetItem(arg, 0, Py_NewRef((PyObject *)Py_TYPE(OBJ(exc))));
-      PyStructSequence_SetItem(arg, 1, Py_NewRef(exc));
-#endif
+      PyStructSequence_SetItem(arg, 0, Py_NewRef(OBJ(exc_type)));
+      PyStructSequence_SetItem(arg, 1, Py_NewRef(OBJ(exc_value)));
+      PyStructSequence_SetItem(arg, 2, Py_NewRef(OBJ(exc_traceback)));
+      PyStructSequence_SetItem(arg, 3, Py_NewRef(Py_None));
+      PyStructSequence_SetItem(arg, 4, Py_NewRef(Py_None));
       PyObject *vargs[] = { NULL, arg };
       result = PyObject_Vectorcall(excepthook, vargs + 1, 1 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
       Py_DECREF(arg);
       if (result)
         goto finally;
     }
+    else
+      PyErr_Clear();
     Py_CLEAR(excepthook);
   }
 
@@ -183,12 +295,8 @@ apsw_write_unraisable(PyObject *hookobject)
   {
     Py_INCREF(excepthook); /* borrowed reference from PySys_GetObject so we increment */
     PyErr_Clear();
-#if PY_VERSION_HEX < 0x030c0000
-    PyObject *vargs[] = { NULL, OBJ(exctype), OBJ(exc), OBJ(exctraceback) };
-#else
-    PyObject *vargs[] = { NULL, (PyObject *)Py_TYPE(OBJ(exc)), OBJ(exc), Py_None };
-#endif
 
+    PyObject *vargs[] = { NULL, OBJ(exc_type), OBJ(exc_value), OBJ(exc_traceback) };
     result = PyObject_Vectorcall(excepthook, vargs + 1, 3 | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
     if (result)
       goto finally;
@@ -198,15 +306,17 @@ apsw_write_unraisable(PyObject *hookobject)
      ourselves to raise it! */
   PyErr_Clear();
 #if PY_VERSION_HEX < 0x030c0000
-  PyErr_Display(exctype, exc, exctraceback);
+  PyErr_Display(exc_type, exc_value, exc_traceback);
 #else
-  PyErr_DisplayException(exc);
+  PyErr_DisplayException(exc_value);
 #endif
 
 finally:
   Py_XDECREF(excepthook);
   Py_XDECREF(result);
-  PY_ERR_CLEAR(exc);
+  Py_XDECREF(exc_type);
+  Py_XDECREF(exc_value);
+  Py_XDECREF(exc_traceback);
   PyErr_Clear(); /* being paranoid - make sure no errors on return */
 }
 
