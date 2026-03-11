@@ -1005,39 +1005,8 @@ def get_icu_config() -> IcuConfig | None:
 
 
 class mc_build_ext(apsw_build_ext):
-    # Figure out compiling with AES
 
     def build_extension(self, ext):
-        # We don't know the compiler and extension combination until
-        # here
-        if ext.name != "apsw.__init__":
-            return super().build_extension(ext)
-
-        aes_enabled = False
-
-        if self.compiler.compiler_type == "unix":
-            if can_compiler_accept_flag(self.compiler.compiler, "-maes"):
-                ext.extra_compile_args.append("-maes")
-                aes_enabled = True
-            if can_compiler_accept_flag(self.compiler.compiler, "-msse4.2"):
-                ext.extra_compile_args.append("-msse4.2")
-
-        elif self.compiler.compiler_type == "msvc":
-            # aes needs no extra flags
-            aes_enabled = True
-
-        if not aes_enabled:
-            # Dsiable HW AES compilation
-            ext.define_macros.append(("SQLITE3MC_OMIT_AES_HARDWARE_SUPPORT", "1"))
-
-        # configure was not run because we didn't download the
-        # amalgamation.  run it here.  msvc doesn't have compiler nor
-        # would configure run anyway
-        if hasattr(self.compiler, "compiler"):
-            subprocess.check_call(["env", f"CC={shlex.join(self.compiler.compiler)}",
-                                   "./configure"], cwd="sqlite3/configure")
-            shutil.copyfile("sqlite3/configure/sqlite_cfg.h", "sqlite3/sqlite_cfg.h")
-
         # We always want temp store in memory and secure delete
         ext.define_macros.append(("SQLITE_TEMP_STORE", "2"))
         ext.define_macros.append(("SQLITE_SECURE_DELETE", "1"))
@@ -1049,13 +1018,6 @@ class mc_build_ext(apsw_build_ext):
 
         return super().build_extension(ext)
 
-import tempfile
-def can_compiler_accept_flag(cmdline, flag):
-    with tempfile.TemporaryDirectory("aescheck") as tmpd:
-        with open(os.path.join(tmpd, "aescheck.c"), "wt") as f:
-            f.write("int main(int argc, char **argv) { return 0; }")
-        proc = subprocess.run(cmdline + [flag, "aescheck.c"], cwd=tmpd, capture_output=True)
-        return proc.returncode == 0
 
 # We depend on every .[ch] file in src except unicode
 depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c" and "unicode" not in f]
