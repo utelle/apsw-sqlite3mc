@@ -2,6 +2,8 @@
 testdb2
 apsw/*.pyd
 TAGS
+sqlite3async.h
+sqlite3async.c
 callgrind.out.*
 :memory:
 doc/vfs.rst
@@ -30,8 +32,13 @@ testdbx
 *.gcno
 *.gcda
 *.gcov
+sqlite3/
 build/
 dist/
+sqlite3.h
+sqlite3.c
+sqlite3ext.h
+!sqlite3/sqlite3.c
 MANIFEST
 MANIFEST.in.tmp
 megatestresults/
@@ -50,11 +57,5 @@ work/
 compile_commands.json
 .vscode/
 .cache/
-
-# configure detritus
-sqlite3/configure/config.log
-sqlite3/configure/Makefile
-sqlite3/configure/sqlite3.pc
-
 /apsw/sqlite_extra_binaries
 !/apsw/sqlite_extra_binaries/README.md

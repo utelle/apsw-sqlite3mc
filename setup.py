@@ -1018,6 +1018,24 @@ class mc_build_ext(apsw_build_ext):
 
         return super().build_extension(ext)
 
+class mc_fetch(fetch):
+    # We want all of sqlite except the main sqlite3.c file.
+    # This saves a copy and puts it back after.
+
+    def run(self):
+        print("Saving sqlite3.c mc amalgamation")
+        saved_copy = pathlib.Path("sqlite3/sqlite3.c").read_text()
+        # double check it is the mc amalgamation
+        assert "#define SQLITE3MC_VERSION_STRING" in saved_copy
+        try:
+            super().run()
+        finally:
+            print("Restoring sqlite3.c mc amalgamation")
+            pathlib.Path("sqlite3/sqlite3.c").write_text(saved_copy)
+
+# build calls fetch directly and it is used in the setup call so use
+# the mc version
+fetch = mc_fetch
 
 # We depend on every .[ch] file in src except unicode
 depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c" and "unicode" not in f]
