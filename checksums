@@ -1,16 +1,26 @@
-# This file contains checksums/hashes of SQLite so that we can verify
+# This file contains checksums/hashes of SQLite downloads so that we can verify
 # downloads using fetch command to setup.py have not been
 # tampered with.  See https://rogerbinns.github.io/apsw/install.html#fetch
 # for information on setup.py flags.
 
 # Format is URL length sha256 sha3_256 all on one line.
 # This extra checking mechanism is to give you a little bit
-# more peace of mind because the SQLite releases are not signed in any
+# more peace of mind because the releases are not signed in any
 # way.
 
+# These are used too compile sqlite extra
+
 https://sqlite.org/vec1/zip/vec1-20260306155250-d070184523.zip 75980 6a58eebbe1e4679645c80084fdfc44f2902e19cde95da5af932bb51bfdc7d02d 77785c8f4e0a9672dded6794861a2ca9d5a5a8dda43300b183690cd84149bf35
+https://sqlite.org/sqlar/zip/sqlar-src-20180107193712-4824e73896.zip 1980460 63bc4b3459fd00498f161d87d8b4516a581278da900001af183486458396806c c7b6a21b58e7499b7c3e36f26b7fafe44ddbd85097b37d905d72ccf5ff3e7cb8
+https://www.zlib.net/zlib132.zip 1616754 e8bf55f3017aa181690990cb58a994e77885da140609fc8f94abe9b65d2cae28 6b35b981f73425dc5f142cbee457f078d42240c022c804982849b962f1d1e2c6
+
+# SQLite releases
+
 https://sqlite.org/2026/sqlite-autoconf-3520000.tar.gz 3258980 f6b50b0c103392af32a8be15b2b9d25959de9a00a70c3979128aafeaa5338b3f 45a4911475950ab5fd486afb776102eb29d69e7569b48947f21e3c8501b51822
 https://sqlite.org/2026/sqlite-src-3520000.zip 14346407 652a98ca833ed638809a52bec225a7f37799f71a995778f9ccb68ad03bd1fc11 a2f0a14b6530138b0c8c096f4b5e5c9d3c1b8a5effa565c91f983e1235f9e26a
+
+https://sqlite.org/2026/sqlite-autoconf-3510300.tar.gz 3208867 81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a 581215771b32ea4c4062e6fb9842c4aa43d0a7fb2b6670ff6fa4ebb807781204
+https://sqlite.org/2026/sqlite-src-3510300.zip 14206164 f8a67a1f5b5cae7c6d42f0994ca7bf1a4a5858868c82adc9fc1340bed5eb8cd2 6b3a1a86bd4671442d962844f928a4fd80614681099748a8c29c435a4f3de19e
 
 https://sqlite.org/2026/sqlite-autoconf-3510200.tar.gz 3208444 fbd89f866b1403bb66a143065440089dd76100f2238314d92274a082d4f2b7bb e0f7ae1c28c4fa551a2ffe8bdfafafa90613dabcef9553050892d02240b44f1d
 https://sqlite.org/2026/sqlite-src-3510200.zip 14202690 85110f762d5079414d99dd5d7917bc3ff7e05876e6ccbd13d8496a3817f20829 e436bb919850445ce5168fb033d2d0d5c53a9d8c9602c7fa62b3e0025541d481

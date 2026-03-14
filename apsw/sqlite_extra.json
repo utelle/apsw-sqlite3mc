@@ -35,6 +35,10 @@
         "description": "A virtual table that returns suggested completions for a partial SQL input",
         "type": "extension"
     },
+    "compress": {
+        "description": "SQL compression functions",
+        "type": "extension"
+    },
     "csv": {
         "description": "A virtual table for reading CSV files",
         "type": "extension"
@@ -97,6 +101,10 @@
     },
     "spellfix": {
         "description": "Search a large vocabulary for close matches",
+        "type": "extension"
+    },
+    "sqlar": {
+        "description": "Utility functions for SQL archives",
         "type": "extension"
     },
     "sqlite3_dbdump": {
@@ -167,12 +175,12 @@
         "description": "Shows contents of stat4 index of a database",
         "type": "executable"
     },
-    "sqlite3_showtmlog": {
-        "description": "Makes human/csv readable output from a tmstmpvfs log file",
-        "type": "executable"
-    },
     "sqlite3_showwal": {
         "description": "Shows low level content of a WAL file",
+        "type": "executable"
+    },
+    "sqlite3_sqlar": {
+        "description": "Command line SQL archive tool",
         "type": "executable"
     },
     "stmt": {
@@ -181,10 +189,6 @@
     },
     "stmtrand": {
         "description": "Function that returns the same sequence of random integers is returned for each invocation of the statement",
-        "type": "extension"
-    },
-    "tmstmpvfs": {
-        "description": "VFS shim that writes timestamps and other tracing information to the reserved bytes of each page, and also generates corresponding log files",
         "type": "extension"
     },
     "uint": {
@@ -209,6 +213,10 @@
     },
     "vtablog": {
         "description": "Virtual table printing diagnostic information for interactive analysis and debugging",
+        "type": "extension"
+    },
+    "zipfile": {
+        "description": "Read/Write access to simple archives",
         "type": "extension"
     },
     "zorder": {
