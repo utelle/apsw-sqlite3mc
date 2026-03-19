@@ -266382,7 +266382,7 @@ SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
 ** Purpose:     Header file for SQLite3 Multiple Ciphers support
 ** Author:      Ulrich Telle
 ** Created:     2020-03-01
-** Copyright:   (c) 2019-2024 Ulrich Telle
+** Copyright:   (c) 2019-2026 Ulrich Telle
 ** License:     MIT
 */
 
@@ -266410,9 +266410,9 @@ SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
 
 #define SQLITE3MC_VERSION_MAJOR      2
 #define SQLITE3MC_VERSION_MINOR      3
-#define SQLITE3MC_VERSION_RELEASE    1
+#define SQLITE3MC_VERSION_RELEASE    2
 #define SQLITE3MC_VERSION_SUBRELEASE 0
-#define SQLITE3MC_VERSION_STRING     "SQLite3 Multiple Ciphers 2.3.1"
+#define SQLITE3MC_VERSION_STRING     "SQLite3 Multiple Ciphers 2.3.2"
 
 #endif /* SQLITE3MC_VERSION_H_ */
 /*** End of #include "sqlite3mc_version.h" ***/
@@ -280481,6 +280481,7 @@ SQLITE_API void sqlite3_activate_see(const char* zPassPhrase);
 SQLITE_API int sqlite3mc_cipher_count();
 SQLITE_API int sqlite3mc_cipher_index(const char* cipherName);
 SQLITE_API const char* sqlite3mc_cipher_name(int cipherIndex);
+SQLITE_API int sqlite3mc_cipher_name_copy(int cipherIndex, char* cipherName, int maxCipherNameSize);
 SQLITE_API int sqlite3mc_config(sqlite3* db, const char* paramName, int newValue);
 SQLITE_API int sqlite3mc_config_cipher(sqlite3* db, const char* cipherName, const char* paramName, int newValue);
 SQLITE_API unsigned char* sqlite3mc_codec_data(sqlite3* db, const char* zDbName, const char* paramName);
@@ -286414,7 +286415,7 @@ void RijndaelInvalidate(Rijndael* rijndael)
 /*
 ** Name:        libaegis.c
 ** Purpose:     Amalgamation of the AEGIS library
-** Copyright:   (c) 2024-2025 Ulrich Telle
+** Copyright:   (c) 2024-2026 Ulrich Telle
 ** SPDX-License-Identifier: MIT
 */
 
@@ -286428,6 +286429,63 @@ void RijndaelInvalidate(Rijndael* rijndael)
 #ifndef AEGIS_PRIVATE
 #define AEGIS_PRIVATE static
 #endif
+
+/* Namespacing to avoid conflicts with libsodium 1.0.21+ */
+
+/* Base Implementation Structs */
+#define aegis128l_implementation             sqlite3mc_aegis128l_implementation
+#define aegis128lx2_implementation           sqlite3mc_aegis128lx2_implementation
+#define aegis128lx4_implementation           sqlite3mc_aegis128lx4_implementation
+#define aegis256_implementation              sqlite3mc_aegis256_implementation
+#define aegis256x2_implementation            sqlite3mc_aegis256x2_implementation
+#define aegis256x4_implementation            sqlite3mc_aegis256x4_implementation
+
+/* Variants without hardware acceleration */
+#define aegis128l_soft_implementation        sqlite3mc_aegis128l_soft_implementation
+#define aegis128x2_soft_implementation       sqlite3mc_aegis128x2_soft_implementation
+#define aegis128x4_soft_implementation       sqlite3mc_aegis128x4_soft_implementation
+#define aegis256_soft_implementation         sqlite3mc_aegis256_soft_implementation
+#define aegis256x2_soft_implementation       sqlite3mc_aegis256x2_soft_implementation
+#define aegis256x4_soft_implementation       sqlite3mc_aegis256x4_soft_implementation
+
+#define softaes_block_encrypt                sqlite3mc_softaes_block_encrypt
+
+/* Variants with support for AES and AVX instruction sets */
+#define aegis128l_aesni_implementation       sqlite3mc_aegis128l_aesni_implementation
+#define aegis128x2_aesni_implementation      sqlite3mc_aegis128x2_aesni_implementation
+#define aegis128x4_aesni_implementation      sqlite3mc_aegis128x4_aesni_implementation
+#define aegis256_aesni_implementation        sqlite3mc_aegis256_aesni_implementation
+#define aegis256x2_aesni_implementation      sqlite3mc_aegis256x2_aesni_implementation
+#define aegis256x4_aesni_implementation      sqlite3mc_aegis256x4_aesni_implementation
+
+/* Variants with support for VAES and AVX2 instruction sets */
+#define aegis128x2_avx2_implementation       sqlite3mc_aegis128x2_avx2_implementation
+#define aegis128x4_avx2_implementation       sqlite3mc_aegis128x4_avx2_implementation
+#define aegis256x2_avx2_implementation       sqlite3mc_aegis256x2_avx2_implementation
+#define aegis256x4_avx2_implementation       sqlite3mc_aegis256x4_avx2_implementation
+
+/* Variants with support for AVX512F instruction sets */
+#define aegis128x4_avx512_implementation     sqlite3mc_aegis128x4_avx512_implementation
+#define aegis256x4_avx512_implementation     sqlite3mc_aegis256x4_avx512_implementation
+
+/* Variants with support for AltiVec instruction sets */
+#define aegis128l_altivec_implementation     sqlite3mc_aegis128l_altivec_implementation
+#define aegis128x2_altivec_implementation    sqlite3mc_aegis128x2_altivec_implementation
+#define aegis128x4_altivec_implementation    sqlite3mc_aegis128x4_altivec_implementation
+#define aegis256_altivec_implementation      sqlite3mc_aegis256_altivec_implementation
+#define aegis256x2_altivec_implementation    sqlite3mc_aegis256x2_altivec_implementation
+#define aegis256x4_altivec_implementation    sqlite3mc_aegis256x4_altivec_implementation
+
+/* Variants with support for ARM Neon instruction sets */
+#define aegis128l_armcrypto_implementation   sqlite3mc_aegis128l_armcrypto_implementation
+#define aegis128x2_armcrypto_implementation  sqlite3mc_aegis128x2_armcrypto_implementation
+#define aegis128x4_armcrypto_implementation  sqlite3mc_aegis128x4_armcrypto_implementation
+#define aegis256_armcrypto_implementation    sqlite3mc_aegis256_armcrypto_implementation
+#define aegis256x2_armcrypto_implementation  sqlite3mc_aegis256x2_armcrypto_implementation
+#define aegis256x4_armcrypto_implementation  sqlite3mc_aegis256x4_armcrypto_implementation
+
+/* Internal Tables (can conflict under -flto) */
+#define _aes_lut                             sqlite3mc_aegis_aes_lut
 
 /* #include "common/cpu.h" */
 /*** Begin of #include "common/cpu.h" ***/
@@ -307713,12 +307771,10 @@ extern struct aegis128x4_implementation aegis128x4_avx512_implementation;
 #ifdef HAVE_VAESINTRIN_H
 
 #ifdef __clang__
-#  if __clang_major__ >= 18
-#    pragma clang attribute push(__attribute__((target("vaes,avx512f,evex512"))), \
-                                             apply_to = function)
+#  if __clang_major__ >= 18 && __clang_major__ < 22
+#    pragma clang attribute push(__attribute__((target("aes,vaes,avx512f,evex512"))), apply_to=function)
 #  else
-#    pragma clang attribute push(__attribute__((target("vaes,avx512f"))), \
-                                             apply_to = function)
+#    pragma clang attribute push(__attribute__((target("aes,vaes,avx512f"))), apply_to=function)
 #  endif
 #elif defined(__GNUC__)
 #  pragma GCC target("vaes,avx512f")
@@ -308860,12 +308916,10 @@ extern struct aegis256x4_implementation aegis256x4_avx512_implementation;
 #ifdef HAVE_VAESINTRIN_H
 
 #ifdef __clang__
-#  if __clang_major__ >= 18
-#    pragma clang attribute push(__attribute__((target("vaes,avx512f,evex512"))), \
-                                             apply_to = function)
+#  if __clang_major__ >= 18 && __clang_major__ < 22
+#    pragma clang attribute push(__attribute__((target("vaes,avx512f,evex512"))), apply_to=function)
 #  else
-#    pragma clang attribute push(__attribute__((target("vaes,avx512f"))), \
-                                             apply_to = function)
+#    pragma clang attribute push(__attribute__((target("vaes,avx512f"))), apply_to=function)
 #  endif
 #elif defined(__GNUC__)
 #  pragma GCC target("vaes,avx512f")
@@ -333304,7 +333358,7 @@ sqlite3mcConfigureSQLCipherVersion(sqlite3* db, int configDefault, int legacyVer
 ** Purpose:     Configuration of SQLite codecs
 ** Author:      Ulrich Telle
 ** Created:     2020-03-02
-** Copyright:   (c) 2006-2024 Ulrich Telle
+** Copyright:   (c) 2006-2026 Ulrich Telle
 ** License:     MIT
 */
 
@@ -333486,18 +333540,17 @@ sqlite3mc_cipher_index(const char* cipherName)
   return (j < count && globalCodecDescriptorTable[j].m_name[0] != 0) ? j + 1 : -1;
 }
 
-SQLITE_API const char*
-sqlite3mc_cipher_name(int cipherIndex)
+static const char*
+sqlite3mcFindCipherName(int cipherIndex)
 {
-  static char cipherName[CIPHER_NAME_MAXLEN] = "";
+  const char* cipherName = NULL;
   int count;
   int j;
 #ifndef SQLITE_OMIT_AUTOINIT
-  if( sqlite3_initialize() ) return cipherName;
+  if (sqlite3_initialize()) return NULL;
 #endif
   count = sqlite3mcGetGlobalCipherCount();
   j = 0;
-  cipherName[0] = '\0';
   if (cipherIndex > 0 && cipherIndex <= count)
   {
     for (j = 0; j < count && globalCodecDescriptorTable[j].m_name[0] != 0; ++j)
@@ -333506,11 +333559,55 @@ sqlite3mc_cipher_name(int cipherIndex)
     }
     if (j < count && globalCodecDescriptorTable[j].m_name[0] != 0)
     {
-      strncpy(cipherName, globalCodecDescriptorTable[j].m_name, CIPHER_NAME_MAXLEN - 1);
-      cipherName[CIPHER_NAME_MAXLEN - 1] = '\0';
+      cipherName = globalCodecDescriptorTable[j].m_name;
     }
   }
   return cipherName;
+}
+
+SQLITE_API const char*
+sqlite3mc_cipher_name(int cipherIndex)
+{
+  static char cipherName[CIPHER_NAME_MAXLEN] = "";
+  const char* globalCipherName = sqlite3mcFindCipherName(cipherIndex);
+  if (globalCipherName)
+  {
+    strncpy(cipherName, globalCipherName, CIPHER_NAME_MAXLEN - 1);
+    cipherName[CIPHER_NAME_MAXLEN - 1] = '\0';
+  }
+  else
+  {
+    cipherName[0] = '\0';
+  }
+  return cipherName;
+}
+
+SQLITE_API int
+sqlite3mc_cipher_name_copy(int cipherIndex, char* cipherName, int maxCipherNameSize)
+{
+  int ok = 1;
+  const char* globalCipherName = sqlite3mcFindCipherName(cipherIndex);
+  if (globalCipherName)
+  {
+    int cipherNameLen = (int)strlen(globalCipherName) + 1;
+    if (maxCipherNameSize >= cipherNameLen)
+    {
+      strncpy(cipherName, globalCipherName, maxCipherNameSize - 1);
+      cipherName[maxCipherNameSize - 1] = '\0';
+    }
+    else
+    {
+      /* Buffer too small, return negative value of minimum required buffer length */
+      ok = -cipherNameLen;
+    }
+  }
+  else
+  {
+    /* Invalid index */
+    cipherName[0] = '\0';
+    ok = 0;
+  }
+  return ok;
 }
 
 static
@@ -334056,16 +334153,16 @@ sqlite3mcConfigureFromUri(sqlite3* db, const char* zDbName, int configDefault)
   {
     /* Check whether cipher is specified */
     const char* cipherName = sqlite3_uri_parameter(dbFileName, "cipher");
-    if (cipherName == NULL)
+    if (cipherName == NULL || cipherName[0] == 0)
     {
       int defaultCipherIndex = sqlite3mc_config(db, "cipher", -1);
       if (defaultCipherIndex > 0)
       {
-        cipherName = sqlite3mc_cipher_name(defaultCipherIndex);
+        cipherName = sqlite3mcFindCipherName(defaultCipherIndex);
         sqlite3mc_config(db, "cipher", defaultCipherIndex);
       }
     }
-    if (cipherName != NULL)
+    if (cipherName != NULL && cipherName[0] != 0)
     {
       int j = 0;
       CipherParams* cipherParams = NULL;
