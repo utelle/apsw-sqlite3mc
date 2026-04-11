@@ -112,10 +112,7 @@ pending_call_callback(void *ignored)
 
   pending_call_registered = 0;
 
-  size_t ran = 0;
-
-  size_t i;
-  for (i = 0; i < pending_call_slots_count; i++)
+  for (size_t i = 0; i < pending_call_slots_count; i++)
   {
     if (pending_call_slots[i].func)
     {
@@ -123,7 +120,6 @@ pending_call_callback(void *ignored)
       void *arg = pending_call_slots[i].arg;
       pending_call_slots[i].func = 0;
       pending_call_slots[i].arg = 0;
-      ran++;
       int res = func(arg);
       assert((res == 0 && !PyErr_Occurred()) || (res != 0 && PyErr_Occurred()));
       if (PyErr_Occurred())
@@ -344,9 +340,12 @@ convert_value_to_pyobject(sqlite3_value *value, int in_constraint_possible, int 
   case SQLITE_FLOAT:
     return PyFloat_FromDouble(sqlite3_value_double(value));
 
-  case SQLITE_TEXT:
-    assert(sqlite3_value_text(value));
-    return PyUnicode_FromStringAndSize((const char *)sqlite3_value_text(value), sqlite3_value_bytes(value));
+  case SQLITE_TEXT: {
+    const char *data = (const char *)sqlite3_value_text(value);
+    if (!data)
+      return PyErr_NoMemory();
+    return PyUnicode_FromStringAndSize(data, sqlite3_value_bytes(value));
+  }
 
   default:
   case SQLITE_NULL:
@@ -382,8 +381,13 @@ convert_value_to_pyobject(sqlite3_value *value, int in_constraint_possible, int 
       return Py_NewRef((PyObject *)pointer);
     Py_RETURN_NONE;
 
-  case SQLITE_BLOB:
-    return PyBytes_FromStringAndSize(sqlite3_value_blob(value), sqlite3_value_bytes(value));
+  case SQLITE_BLOB: {
+    const void *data = sqlite3_value_blob(value);
+    int len = sqlite3_value_bytes(value);
+    if (!data && len)
+      return PyErr_NoMemory();
+    return PyBytes_FromStringAndSize(data, len);
+  }
   }
 }
 

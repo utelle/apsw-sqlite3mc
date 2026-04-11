@@ -9,6 +9,7 @@ import os
 import sys
 import shlex
 import glob
+import io
 import re
 import sysconfig
 import time
@@ -16,9 +17,12 @@ import zipfile
 import tarfile
 import subprocess
 import shutil
+import hashlib
 import types
 import pathlib
 import contextlib
+import urllib.request
+
 from dataclasses import dataclass
 
 from setuptools import setup, Extension, Command
@@ -288,7 +292,7 @@ class fetch(Command):
 
             AURL = fixup_download_url(AURL)
 
-            data = self.download(AURL, checksum=True)
+            data = download(AURL, checksum=True, missing_checksum_ok=self.missing_checksum_ok)
 
             import zipfile
 
@@ -302,7 +306,7 @@ class fetch(Command):
             for desc, url, replace in (
                 (
                     "experimental vec1 extension source",
-                    "https://sqlite.org/vec1/zip/vec1-20260306155250-d070184523.zip",
+                    "https://sqlite.org/vec1/zip/vec1-20260409204746-4b73767df0.zip",
                     "sqlite3/vec1",
                 ),
                 (
@@ -317,7 +321,7 @@ class fetch(Command):
                 ),
             ):
                 write(f"  Getting the {desc}")
-                data = self.download(url, checksum=True)
+                data = download(url, checksum=True, missing_checksum_ok=self.missing_checksum_ok)
 
                 with zipfile.ZipFile(data) as zipf:
                     for zi in zipf.infolist():
@@ -334,7 +338,7 @@ class fetch(Command):
 
             AURL = fixup_download_url(AURL)
 
-            data = self.download(AURL, checksum=True)
+            data = download(AURL, checksum=True)
 
             with tarfile.open(mode="r", fileobj=data) as tarf:
                 while (info := tarf.next()) is not None:
@@ -356,92 +360,6 @@ class fetch(Command):
                     if val:
                         env[v] = val
                 subprocess.check_call(["./configure"], cwd="sqlite3", env=env)
-
-            patch_amalgamation()
-
-    # A function for verifying downloads
-    def verifyurl(self, url, data):
-        d = ["%s" % (len(data),)]
-        import hashlib
-
-        d.append(hashlib.sha256(data).hexdigest())
-        d.append(hashlib.sha3_256(data).hexdigest())
-
-        write("    Length:", d[0], " SHA256:", d[1], " SHA3_256:", d[2])
-        sums = os.path.join(os.path.dirname(__file__), "checksums")
-        for line in read_whole_file(sums, "rt").split("\n"):
-            line = line.strip()
-            if len(line) == 0 or line[0] == "#":
-                continue
-            l = [l.strip() for l in line.split()]
-            if len(l) != 4:
-                write("Invalid line in checksums file:", line, sys.stderr)
-                raise ValueError("Bad checksums file")
-            if l[0] == url:
-                if l[1:] == d:
-                    write("    Checksums verified")
-                    return
-                if l[1] != d[0]:
-                    write("Length does not match.  Expected", l[1], "download was", d[0])
-                if l[2] != d[1]:
-                    write("SHA256 does not match.  Expected", l[2], "download was", d[1])
-                if l[3] != d[2]:
-                    write("SHA3_256 does not match.  Expected", l[3], "download was", d[2])
-                write(
-                    "The download does not match the checksums distributed with APSW.\n"
-                    "The download should not have changed since the checksums were\n"
-                    "generated.  The causes could be anything from network corruption,\n"
-                    "overloaded server error message, to a malicious attack."
-                )
-                raise ValueError("Checksums do not match")
-        # no matching line
-        write("    (Not verified.  No match in checksums file)")
-        if not self.missing_checksum_ok:
-            raise ValueError("No checksum available.  Use --missing-checksum-ok option to continue")
-
-    # download a url
-    def download(self, url, text=False, checksum=True):
-        import urllib.request
-
-        urlopen = urllib.request.urlopen
-        import io
-
-        bytesio = io.BytesIO
-
-        write("    Fetching", url)
-        count = 0
-        while True:
-            try:
-                if count:
-                    write("        Try #", str(count + 1))
-                try:
-                    page = urlopen(url).read()
-                except:
-                    # Degrade to http if https is not supported
-                    e = sys.exc_info()[1]
-                    if count >= 4 and url.startswith("https:"):
-                        write("        [Python has https issues? - using http instead]")
-                        page = urlopen(url.replace("https://", "http://")).read()
-                    else:
-                        raise
-                break
-            except:
-                write("       Error ", str(sys.exc_info()[1]))
-                time.sleep(3.14 * count)
-                count += 1
-                if count >= 10:
-                    raise
-
-        if text:
-            page = page.decode("iso8859_1")
-
-        if checksum:
-            self.verifyurl(url, page)
-
-        if not text:
-            page = bytesio(page)
-
-        return page
 
 
 # We allow enable/omit to be specified to build and then pass them to build_ext
@@ -801,120 +719,6 @@ class apsw_sdist(sparent):
         return v
 
 
-class apsw_patch_amalgamation(Command):
-    description = "Patches amalgamation"
-
-    user_options = []
-    boolean_options = []
-
-    def initialize_options(self):
-        pass
-
-    def finalize_options(self):
-        pass
-
-    def run(self):
-        if not patch_amalgamation():
-            raise Exception("Failed to patch amalgamation")
-
-
-def get_amalgamation_version(filename):
-    for line in pathlib.Path(filename).read_text(encoding="utf8").splitlines():
-        if mo := re.match(r"^#define\s+SQLITE_VERSION_NUMBER\s+([0-9]{7})\s*$", line):
-            return int(mo.group(1))
-    raise Exception(f"Unable to find version in {filename=}")
-
-
-# amalgamation patching
-def patch_amalgamation() -> bool:
-    "Returns bool if it succeeded"
-
-    def get_hunks(patch: list[str]):
-        # reads patch and yields each hunk as list of before lines and list of after lines
-
-        # skip headers
-        line_num = 0
-        while patch[line_num][:1] != "@":
-            line_num += 1
-        line_num += 1
-
-        # each hunk is @ separated
-        before = []
-        after = []
-        while line_num < len(patch):
-            line = patch[line_num]
-            if line[:1] == "@":
-                yield before, after
-                line_num += 1
-                before = []
-                after = []
-                continue
-            # blank line goes to both
-            if not line:
-                line = " "
-            if line[0] == "+":
-                after.append(line[1:])
-            elif line[0] == "-":
-                before.append(line[1:])
-            else:
-                before.append(line[1:])
-                after.append(line[1:])
-            line_num += 1
-
-        yield before, after
-
-    def apply_patch(patch_lines, source_lines):
-        # this is dumb compared to real patch tool.  that isn't
-        # available so this naively finds the first set of matching
-        # lines, completely ignoring the location given in the patch.
-        # the first match found is used.  the patch should be
-        # generated with more context lines to avoid confusion
-
-        # this can only ever increase
-        source_line = 0
-
-        for hunk_num, (before, after) in enumerate(get_hunks(patch_lines), 1):
-            line = before[0]
-            found = False
-            while source_line < len(source_lines):
-                if (
-                    source_lines[source_line] == line
-                    and before == source_lines[source_line : source_line + len(before)]
-                ):
-                    # found it
-                    source_lines[source_line : source_line + len(before)] = after
-                    source_line += len(after)
-                    found = True
-                    break
-                source_line += 1
-            if not found:
-                # print(f"Failed to find hunk #{hunk_num}")
-                return False
-
-        return True
-
-    source_file_name = pathlib.Path(__file__).parent / "sqlite3" / "sqlite3.c"
-    patch_file_name = pathlib.Path(__file__).parent / "tools" / "carray.patch"
-
-    if get_amalgamation_version(source_file_name) >= 3052000:
-        print("No patches needed for this SQLite version")
-        return True
-
-    try:
-        source_file_lines = source_file_name.read_text(encoding="utf8").splitlines()
-        patch_file_lines = patch_file_name.read_text(encoding="utf8").splitlines()
-    except OSError:
-        return False
-
-    if apply_patch(patch_file_lines, source_file_lines):
-        pathlib.Path(source_file_name).rename(str(source_file_name) + ".orig")
-        pathlib.Path(source_file_name).write_text("\n".join(source_file_lines) + "\n", encoding="utf8")
-        print("  Patched amalgamation with apsw carray update")
-        return True
-
-    return False
-
-
 def set_config_from_system(outputfilename: str):
     import ctypes, ctypes.util
 
@@ -1039,6 +843,121 @@ def get_icu_config() -> IcuConfig | None:
 
     return None
 
+# A function for verifying downloads
+def verifyurl(url: str, data: bytes, missing_checksum_ok: bool) -> None:
+    d = ["%s" % (len(data),)]
+
+    d.append(hashlib.sha256(data).hexdigest())
+    d.append(hashlib.sha3_256(data).hexdigest())
+
+    write("    Length:", d[0], " SHA256:", d[1], " SHA3_256:", d[2])
+    sums = os.path.join(os.path.dirname(__file__), "checksums")
+    for line in read_whole_file(sums, "rt").split("\n"):
+        line = line.strip()
+        if len(line) == 0 or line[0] == "#":
+            continue
+        l = [l.strip() for l in line.split()]
+        if len(l) != 4:
+            write("Invalid line in checksums file:", line, sys.stderr)
+            raise ValueError("Bad checksums file")
+        if l[0] == url:
+            if l[1:] == d:
+                write("    Checksums verified")
+                return
+            if l[1] != d[0]:
+                write("Length does not match.  Expected", l[1], "download was", d[0])
+            if l[2] != d[1]:
+                write("SHA256 does not match.  Expected", l[2], "download was", d[1])
+            if l[3] != d[2]:
+                write("SHA3_256 does not match.  Expected", l[3], "download was", d[2])
+            write(
+                "The download does not match the checksums distributed with APSW.\n"
+                "The download should not have changed since the checksums were\n"
+                "generated.  The causes could be anything from network corruption,\n"
+                "overloaded server error message, to a malicious attack."
+            )
+            raise ValueError("Checksums do not match")
+    # no matching line
+    write("    (Not verified.  No match in checksums file)")
+    if not missing_checksum_ok:
+        raise ValueError("No checksum available.  Use --missing-checksum-ok option to continue")
+
+
+# download a url
+def download(url: str, checksum: bool = True, missing_checksum_ok: bool = False) -> io.BytesIO:
+
+    urlopen = urllib.request.urlopen
+
+    cache_dir, file_name = get_cache_for(url)
+
+    cache_name = cache_dir / file_name
+    if cache_name.exists():
+        try:
+            if abs(time.time() - cache_name.stat().st_mtime) < 7 *24 * 60 * 60:
+                page = (cache_dir / file_name).read_bytes()
+                write("    Cached", url)
+                if checksum:
+                    verifyurl(url, page, missing_checksum_ok)
+                return io.BytesIO(page)
+        except Exception:
+            # many things could go wrong in the above including being
+            # unable to stat, unable to read etc, so we fallback to a
+            # regular fetch
+            pass
+
+
+    write("    Fetching", url)
+    count = 0
+    while True:
+        try:
+            if count:
+                write("        Try #", str(count + 1))
+            try:
+                page = urlopen(url).read()
+            except Exception:
+                # Degrade to http if https is not supported and we have a checksum
+                if count >= 4 and url.startswith("https:") and checksum:
+                    write("        [Python has https issues? - using http instead]")
+                    page = urlopen(url.replace("https://", "http://")).read()
+                else:
+                    raise
+            break
+        except Exception:
+            write("       Error ", str(sys.exc_info()[1]))
+            time.sleep(3.14 * count)
+            count += 1
+            if count >= 10:
+                raise
+
+    if checksum:
+        verifyurl(url, page, missing_checksum_ok)
+
+    if not cache_name.exists():
+        tmpf = cache_dir / hashlib.sha256(str(time.time()).encode("utf8")).hexdigest()[:16]
+        tmpf.write_bytes(page)
+        try:
+            tmpf.rename(cache_name)
+        except Exception:
+            # we could have raced or something so fail safe
+            pass
+
+    return io.BytesIO(page)
+
+# cache directory and filename for url
+def get_cache_for(url: str) -> tuple[pathlib.Path, str]:
+    match sys.platform:
+        case "win32":
+            cache_dir = pathlib.Path(os.environ.get("LOCALAPPDATA", pathlib.Path.home() / "AppData/Local"))
+        case "darwin":
+            cache_dir = pathlib.Path.home() / "Library/Caches"
+        case _:
+            cache_dir = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache"))
+
+    cache_dir = cache_dir / "apsw-setup"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    return cache_dir, hashlib.sha256(url.encode("utf8")).hexdigest()[:16]
+
 
 class mc_build_ext(apsw_build_ext):
 
@@ -1133,6 +1052,5 @@ if __name__ == "__main__":
             "build_ext": mc_build_ext,
             "build": apsw_build,
             "sdist": apsw_sdist,
-            "patch": apsw_patch_amalgamation,
         },
     )

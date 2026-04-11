@@ -1922,11 +1922,9 @@ Enter ".help" for instructions
     def _csvin_wrapper(self, filename, dialect):
         # Returns a csv reader that works around python bugs and uses
         # dialect dict to configure reader
-        thefile = open(filename, "r", encoding=self.encoding[0])
-        for line in csv.reader(thefile, **dialect.copy()):
-            yield line
-        thefile.close()
-        return
+        with open(filename, "r", encoding=self.encoding[0]) as thefile:
+            for line in csv.reader(thefile, **dialect.copy()):
+                yield line
 
     def command_autoimport(self, cmd):
         """autoimport FILENAME ?TABLE?: Imports filename creating a table and automatically working out separators and data types (alternative to .import command)
@@ -2178,6 +2176,39 @@ Enter ".help" for instructions
             )
         finally:
             self.pop_output()
+
+    def command_limit(self, cmd):
+        """limit ?NAME VALUE?: Show all limits, or set a specific one
+
+        With no arguments lists all limits.  Supply a name and value to
+        change.  For example:
+
+           .limit attached 10
+        """
+        if len(cmd) == 0:
+            outputs = {}
+            for k in apsw.mapping_limits:
+                if type(k) is not str:
+                    continue
+                pretty = k[len("SQLITE_LIMIT_") :].lower()
+                outputs[pretty] = self.db.limit(getattr(apsw, k), -1)
+            w = max(len(k) for k in outputs.keys())
+            for k, v in outputs.items():
+                self.write(self.stdout, " " * (w - len(k)))
+                self.write(self.stdout, k + ":  ")
+                self.write_value(v)
+                self.write(self.stdout, "\n")
+            return
+        elif len(cmd) != 2:
+            raise self.Error("Expected zero or two parameters")
+
+        key = "SQLITE_LIMIT_" + cmd[0].upper()
+        if key not in apsw.mapping_limits:
+            raise self.Error(f"Unknown limit option {key}")
+        v = self.db.limit(getattr(apsw, key), int(cmd[1]))
+        self.write(self.stdout, cmd[0].lower() + ": ")
+        self.write_value(v)
+        self.write(self.stdout, "\n")
 
     def command_load(self, cmd):
         """load FILE ?ENTRY?: Loads a SQLite extension library

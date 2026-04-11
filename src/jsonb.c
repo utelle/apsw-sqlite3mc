@@ -879,15 +879,29 @@ jsonb_encode_internal_actual(struct JSONBuffer *buf, PyObject *obj)
       /* the expected code path */
       Py_ssize_t pos = 0;
       PyObject *key, *value;
-      while (PyDict_Next(obj, &pos, &key, &value))
+
+      /* take a copy of the dict to avoid mutation crashes possible
+         when doing encoding */
+      PyObject *copy = PyDict_Copy(obj);
+      if (!copy)
+        goto error;
+
+      while (PyDict_Next(copy, &pos, &key, &value))
       {
         size_t offset = buf->size;
 
         if (jsonb_encode_object_key(buf, key))
+        {
+          Py_DECREF(copy);
           goto error;
+        }
         if (buf->size != offset && jsonb_encode_internal(buf, value))
+        {
+          Py_DECREF(copy);
           goto error;
+        }
       }
+      Py_DECREF(copy);
     }
     else
     {
@@ -1419,14 +1433,21 @@ jsonb_decode_one_actual(struct JSONBDecodeBuffer *buf)
     {
       enum JSONBTag key_tag = buf->buffer[buf->offset] & 0x0f;
       if (key_tag != JT_TEXT && key_tag != JT_TEXTJ && key_tag != JT_TEXT5 && key_tag != JT_TEXTRAW)
+      {
+        Py_XDECREF(builder);
         return malformed(buf, "object key is not a string");
+      }
       PyObject *key = jsonb_decode_one(buf);
       if (!key)
+      {
+        Py_XDECREF(builder);
         return key;
+      }
       if (buf->offset >= buf->end_offset)
       {
         if (buf->alloc)
           Py_DECREF(key);
+        Py_XDECREF(builder);
         return malformed(buf, "no value for key");
       }
       PyObject *value = jsonb_decode_one(buf);
@@ -1434,6 +1455,7 @@ jsonb_decode_one_actual(struct JSONBDecodeBuffer *buf)
       {
         if (buf->alloc)
           Py_DECREF(key);
+        Py_XDECREF(builder);
         return value;
       }
       if (builder)

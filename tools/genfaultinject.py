@@ -124,6 +124,8 @@ returns = {
             sqlite3_malloc sqlite3_malloc64 sqlite3_mprintf
             sqlite3_realloc sqlite3_realloc64
             sqlite3_normalized_sql sqlite3_expanded_sql
+            sqlite3_column_text sqlite3_column_blob
+            sqlite3_value_text sqlite3_value_blob
             """.split(),
     # numeric return
     "sqlite": """
@@ -168,10 +170,13 @@ returns = {
             sqlite3changeset_apply_v2_strm sqlite3changeset_concat_strm
             sqlite3changeset_invert_strm sqlite3changeset_start_strm sqlite3changeset_start_v2_strm
             sqlite3session_changeset_strm sqlite3session_patchset_strm sqlite3changegroup_add_strm
-            sqlite3changegroup_output_strm sqlite3rebaser_rebase_strm
+            sqlite3changegroup_output_strm sqlite3rebaser_rebase_strm sqlite3changegroup_config
 
             sqlite3changegroup_add sqlite3changegroup_add_change sqlite3changegroup_new sqlite3changegroup_output
-            sqlite3changegroup_schema sqlite3changeset_apply_v2
+            sqlite3changegroup_schema sqlite3changegroup_change_begin sqlite3changegroup_change_blob
+            sqlite3changegroup_change_double sqlite3changegroup_change_finish sqlite3changegroup_change_int64
+            sqlite3changegroup_change_null sqlite3changegroup_change_text
+            sqlite3changeset_apply_v2
             sqlite3changeset_concat sqlite3changeset_conflict sqlite3changeset_fk_conflicts
             sqlite3changeset_invert sqlite3changeset_new sqlite3changeset_next sqlite3changeset_old
             sqlite3changeset_op sqlite3changeset_pk sqlite3changeset_start sqlite3changeset_start_v2
@@ -193,7 +198,7 @@ returns = {
         PyMapping_Size PySet_Discard PyModule_AddObjectRef
         PyContext_Enter PyContextVar_Get PyLong_AsDouble
         PyModule_AddFunctions PyObject_GenericSetAttr
-        PyObject_RichCompareBool
+        PyObject_RichCompareBool PyModule_AddType
 
         PyObject_GetBufferContiguous PyObject_GetBuffer PyObject_GetBufferContiguousBounded
         _PyTuple_Resize

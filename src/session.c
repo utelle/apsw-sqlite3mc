@@ -402,6 +402,8 @@ APSWSession_dealloc(PyObject *self_)
 {
   APSWSession *self = (APSWSession *)self_;
 
+  APSW_CLEAR_WEAKREFS;
+
   PY_ERR_FETCH(exc);
   APSWSession_dealloc_mutex(self);
   if (PyErr_Occurred())
@@ -2043,8 +2045,13 @@ APSWChangesetIterator_dealloc(PyObject *self_)
 /** .. class:: ChangesetBuilder
 
   This object wraps a `sqlite3_changegroup <https://sqlite.org/session/changegroup.html>`__
-  letting you concatenate changesets and individual :class:`TableChange` into one larger
-  changeset.
+  to build a changeset or patchset.   The contents can come from:
+
+  * Existing changesets
+  * Individual :class:`TableChange`
+  * :meth:`add_insert`, :meth:`add_update`, :meth:`add_delete`
+
+  See the :ref:`example <example_changesetbuilder>`
 
  */
 
@@ -2093,6 +2100,10 @@ APSWChangesetBuilder_close_internal(APSWChangesetBuilder *self)
   if (self->connection)
   {
     Connection_remove_dependent(self->connection, (PyObject *)self);
+    /* we could hold the last reference to the connection so it will
+       close on the clear, but we can't have a hanging mutex hold
+       hence this release */
+    sqlite3_mutex_leave(self->connection->dbmutex);
     Py_CLEAR(self->connection);
   }
 }
@@ -2103,9 +2114,7 @@ APSWChangesetBuilder_dealloc_mutex(void *self_)
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
   DBMUTEX_RETRY(self->connection, APSWChangesetBuilder_dealloc_mutex);
 
-  sqlite3_mutex *mutex = (self->connection) ? self->connection->dbmutex : NULL;
   APSWChangesetBuilder_close_internal(self);
-  sqlite3_mutex_leave(mutex);
 
   Py_TpFree(self_);
   return 0;
@@ -2115,6 +2124,7 @@ static void
 APSWChangesetBuilder_dealloc(PyObject *self_)
 {
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  APSW_CLEAR_WEAKREFS;
 
   PY_ERR_FETCH(exc);
   APSWChangesetBuilder_dealloc_mutex(self);
@@ -2134,6 +2144,8 @@ APSWChangesetBuilder_close(PyObject *self_, PyObject *Py_UNUSED(unused))
 {
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
 
+  if (self->connection)
+    DBMUTEX_ENSURE(self->connection);
   APSWChangesetBuilder_close_internal(self);
   MakeExistingException();
 
@@ -2155,6 +2167,8 @@ static PyObject *
 APSWChangesetBuilder_add(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  CHECK_BUILDER_CLOSED(NULL);
+
   PyObject *changeset = NULL;
   {
     ChangesetBuilder_add_CHECK;
@@ -2162,8 +2176,6 @@ APSWChangesetBuilder_add(PyObject *self_, PyObject *const *fast_args, Py_ssize_t
     ARG_MANDATORY ARG_ChangesetInput(changeset);
     ARG_EPILOG(NULL, ChangesetBuilder_add_USAGE, );
   }
-
-  CHECK_BUILDER_CLOSED(NULL);
 
   int res = SQLITE_ERROR;
 
@@ -2199,14 +2211,14 @@ APSWChangesetBuilder_add_change(PyObject *self_, PyObject *const *fast_args, Py_
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
   APSWTableChange *change = NULL;
 
+  CHECK_BUILDER_CLOSED(NULL);
+
   {
     ChangesetBuilder_add_change_CHECK;
     ARG_PROLOG(1, ChangesetBuilder_add_change_KWNAMES);
     ARG_MANDATORY ARG_TableChange(change);
     ARG_EPILOG(NULL, ChangesetBuilder_add_change_USAGE, );
   }
-
-  CHECK_BUILDER_CLOSED(NULL);
 
   if (!change->iter)
     return PyErr_Format(ExcInvalidContext, "The table change has gone out of scope");
@@ -2217,6 +2229,318 @@ APSWChangesetBuilder_add_change(PyObject *self_, PyObject *const *fast_args, Py_
   if (PyErr_Occurred())
     return NULL;
   Py_RETURN_NONE;
+}
+
+/** .. method:: config(op: int, *args: Any) -> int
+
+  Configures the changegroup.
+
+  -* sqlite3changegroup_config
+*/
+static PyObject *
+APSWChangesetBuilder_config(PyObject *self_, PyObject *args)
+{
+  APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  CHECK_BUILDER_CLOSED(NULL);
+
+  int res, opt, optdup, intval;
+
+  if (PyTuple_GET_SIZE(args) < 1 || !PyLong_Check(PyTuple_GET_ITEM(args, 0)))
+    return PyErr_Format(PyExc_TypeError, "There should be at least one argument with the first being a number");
+
+  opt = PyLong_AsInt(PyTuple_GET_ITEM(args, 0));
+  if (PyErr_Occurred())
+    return NULL;
+
+  switch (opt)
+  {
+  case SQLITE_CHANGEGROUP_CONFIG_PATCHSET:
+    if (!PyArg_ParseTuple(args, "ii", &optdup, &intval))
+      return NULL;
+    assert(opt == optdup);
+    res = sqlite3changegroup_config(self->group, opt, &intval);
+    if (res != SQLITE_OK)
+    {
+      SET_EXC(res, NULL);
+      return NULL;
+    }
+    return PyLong_FromLong(intval);
+  default:
+    return PyErr_Format(PyExc_TypeError, "Unknown config op %d", (int)opt);
+  }
+}
+
+static void
+APSWChangesetBuilder_row(APSWChangesetBuilder *self, int new, PyObject *row)
+{
+  int res = 0;
+  assert(new == 0 || new == 1);
+
+  /* PySequence_Fast is used deliberately and will have to change for
+     free threaded builds making this an intentional test case when that
+     work gets done */
+
+  PyObject *row_fast = PySequence_Fast(row, "expected a sequence of values");
+  if (!row_fast)
+    return;
+
+  for (Py_ssize_t i = 0; i < PySequence_Fast_GET_SIZE(row_fast); i++)
+  {
+    PyObject *value = PySequence_Fast_GET_ITEM(row_fast, i);
+
+    /* this is similar to APSWCursor_dobinding but we don't allow all
+       the automagic conversions */
+    if (Py_Is(value, apsw_no_change_object))
+    {
+      /* skip this one */
+    }
+    else if (Py_IsNone(value))
+    {
+      res = sqlite3changegroup_change_null(self->group, new, i);
+      if (res != SQLITE_OK)
+        goto change_failed;
+    }
+    else if (PyLong_Check(value))
+    {
+      long long v = PyLong_AsLongLong(value);
+      if (PyErr_Occurred())
+        /* overflow */
+        goto change_failed;
+
+      res = sqlite3changegroup_change_int64(self->group, new, i, v);
+      if (res != SQLITE_OK)
+        goto change_failed;
+    }
+    else if (PyFloat_Check(value))
+    {
+      res = sqlite3changegroup_change_double(self->group, new, i, PyFloat_AS_DOUBLE(value));
+      if (res != SQLITE_OK)
+        goto change_failed;
+    }
+    else if (PyUnicode_Check(value))
+    {
+      const char *strdata = NULL;
+      Py_ssize_t strbytes = 0;
+      strdata = PyUnicode_AsUTF8AndSize(value, &strbytes);
+      if (strbytes >= INT32_MAX)
+      {
+        res = SQLITE_TOOBIG;
+        goto change_failed;
+      }
+      if (!strdata)
+        goto change_failed;
+      assert(((int)strbytes) >= (int)0);
+      res = sqlite3changegroup_change_text(self->group, new, i, strdata, (int)strbytes);
+      if (res != SQLITE_OK)
+        goto change_failed;
+    }
+    else if (PyObject_CheckBuffer(value))
+    {
+      int asrb;
+      Py_buffer py3buffer;
+
+      asrb = PyObject_GetBufferContiguous(value, &py3buffer, PyBUF_SIMPLE);
+      if (asrb != 0)
+        goto change_failed;
+      if (py3buffer.len >= INT32_MAX)
+      {
+        res = SQLITE_TOOBIG;
+        goto change_failed;
+      }
+      assert(((int)py3buffer.len) >= (int)0);
+      res = sqlite3changegroup_change_blob(self->group, new, i, py3buffer.buf, (int)py3buffer.len);
+      PyBuffer_Release(&py3buffer);
+      if (res != SQLITE_OK)
+        goto change_failed;
+    }
+    else
+    {
+      PyErr_Format(PyExc_TypeError, "Expected a SQLite value, not %s", Py_TypeName(value));
+      goto change_failed;
+    }
+    continue;
+
+  change_failed:
+    SET_EXC(res, NULL);
+    AddTraceBackHere(__FILE__, __LINE__, "builder_row", "{s: O, s: n, s: O}", "row", row, "column", i, "value",
+                     value);
+    break;
+  }
+
+  Py_DECREF(row_fast);
+}
+
+/** .. method:: add_insert(table: str, indirect: bool, row: SQLiteValues) -> None
+
+  Adds an ``insert`` change row.  You must have called :meth:`schema` first so
+  the table can be verified.
+
+  .. seealso::
+
+    * :meth:`add_delete`
+    * :meth:`add_update`
+
+  -* sqlite3changegroup_change_begin
+  -* sqlite3changegroup_change_finish
+*/
+static PyObject *
+APSWChangesetBuilder_add_insert(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs,
+                                PyObject *fast_kwnames)
+{
+  APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  CHECK_BUILDER_CLOSED(NULL);
+
+  const char *table = NULL;
+  int indirect;
+  PyObject *row = NULL;
+
+  {
+    ChangesetBuilder_add_insert_CHECK;
+    ARG_PROLOG(3, ChangesetBuilder_add_insert_KWNAMES);
+    ARG_MANDATORY ARG_str(table);
+    ARG_MANDATORY ARG_bool(indirect);
+    ARG_MANDATORY ARG_pyobject(row);
+    ARG_EPILOG(NULL, ChangesetBuilder_add_insert_USAGE, );
+  }
+
+  char *zErr = NULL;
+
+  int res = sqlite3changegroup_change_begin(self->group, SQLITE_INSERT, table, indirect, &zErr);
+  if (res != SQLITE_OK)
+  {
+    make_exception_with_message(res, zErr, -1);
+    sqlite3_free(zErr);
+    return NULL;
+  }
+
+  APSWChangesetBuilder_row(self, 1, row);
+
+  res = sqlite3changegroup_change_finish(self->group, !!PyErr_Occurred(), &zErr);
+  if (res != SQLITE_OK)
+  {
+    make_exception_with_message(res, zErr, -1);
+    sqlite3_free(zErr);
+    return NULL;
+  }
+  return PyErr_Occurred() ? NULL : Py_NewRef(Py_None);
+}
+
+/** .. method:: add_delete(table: str, indirect: bool, row: SQLiteValues) -> None
+
+  Adds an ``delete`` change row.  You must have called :meth:`schema` first so
+  the table can be verified.
+
+ .. seealso::
+
+    * :meth:`add_insert`
+    * :meth:`add_update`
+
+
+  -* sqlite3changegroup_change_begin
+  -* sqlite3changegroup_change_finish
+*/
+static PyObject *
+APSWChangesetBuilder_add_delete(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs,
+                                PyObject *fast_kwnames)
+{
+  APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  CHECK_BUILDER_CLOSED(NULL);
+
+  const char *table = NULL;
+  int indirect;
+  PyObject *row = NULL;
+
+  {
+    ChangesetBuilder_add_delete_CHECK;
+    ARG_PROLOG(3, ChangesetBuilder_add_delete_KWNAMES);
+    ARG_MANDATORY ARG_str(table);
+    ARG_MANDATORY ARG_bool(indirect);
+    ARG_MANDATORY ARG_pyobject(row);
+    ARG_EPILOG(NULL, ChangesetBuilder_add_delete_USAGE, );
+  }
+
+  char *zErr = NULL;
+
+  int res = sqlite3changegroup_change_begin(self->group, SQLITE_DELETE, table, indirect, &zErr);
+  if (res != SQLITE_OK)
+  {
+    make_exception_with_message(res, zErr, -1);
+    sqlite3_free(zErr);
+    return NULL;
+  }
+
+  APSWChangesetBuilder_row(self, 0, row);
+
+  res = sqlite3changegroup_change_finish(self->group, !!PyErr_Occurred(), &zErr);
+  if (res != SQLITE_OK)
+  {
+    make_exception_with_message(res, zErr, -1);
+    sqlite3_free(zErr);
+    return NULL;
+  }
+  return PyErr_Occurred() ? NULL : Py_NewRef(Py_None);
+}
+
+/** .. method:: add_update(table: str, indirect: bool, old: SQLiteValues, new: SQLiteValues) -> None
+
+  Adds an ``update`` change giving old and new rows. You must have called :meth:`schema` first so
+  the table can be verified.
+
+  See `sqlite3changegroup_change_finish <https://sqlite.org/session/sqlite3changegroup_change_finish.html>`__
+  for details on which columns of old and new you must provide values for.  Where no value should be
+  provided, use :attr:`apsw.no_change`.
+
+  .. seealso::
+
+    * :meth:`add_insert`
+    * :meth:`add_delete`
+
+  -* sqlite3changegroup_change_begin
+  -* sqlite3changegroup_change_finish
+*/
+static PyObject *
+APSWChangesetBuilder_add_update(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs,
+                                PyObject *fast_kwnames)
+{
+  APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  CHECK_BUILDER_CLOSED(NULL);
+
+  const char *table = NULL;
+  int indirect;
+  PyObject *old = NULL, *new = NULL;
+
+  {
+    ChangesetBuilder_add_update_CHECK;
+    ARG_PROLOG(4, ChangesetBuilder_add_update_KWNAMES);
+    ARG_MANDATORY ARG_str(table);
+    ARG_MANDATORY ARG_bool(indirect);
+    ARG_MANDATORY ARG_pyobject(old);
+    ARG_MANDATORY ARG_pyobject(new);
+    ARG_EPILOG(NULL, ChangesetBuilder_add_update_USAGE, );
+  }
+
+  char *zErr = NULL;
+
+  int res = sqlite3changegroup_change_begin(self->group, SQLITE_UPDATE, table, indirect, &zErr);
+  if (res != SQLITE_OK)
+  {
+    make_exception_with_message(res, zErr, -1);
+    sqlite3_free(zErr);
+    return NULL;
+  }
+
+  APSWChangesetBuilder_row(self, 0, old);
+  if (!PyErr_Occurred())
+    APSWChangesetBuilder_row(self, 1, new);
+
+  res = sqlite3changegroup_change_finish(self->group, !!PyErr_Occurred(), &zErr);
+  if (res != SQLITE_OK)
+  {
+    make_exception_with_message(res, zErr, -1);
+    sqlite3_free(zErr);
+    return NULL;
+  }
+  return PyErr_Occurred() ? NULL : Py_NewRef(Py_None);
 }
 
 /** .. method:: schema(db: Connection | AsyncConnection, schema: str) -> None
@@ -2235,6 +2559,8 @@ static PyObject *
 APSWChangesetBuilder_schema(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast_nargs, PyObject *fast_kwnames)
 {
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  CHECK_BUILDER_CLOSED(NULL);
+
   Connection *db = NULL;
   const char *schema = NULL;
 
@@ -2246,7 +2572,6 @@ APSWChangesetBuilder_schema(PyObject *self_, PyObject *const *fast_args, Py_ssiz
     ARG_EPILOG(NULL, ChangesetBuilder_schema_USAGE, );
   }
 
-  CHECK_BUILDER_CLOSED(NULL);
   CHECK_CLOSED(db, NULL);
 
   int rc = sqlite3changegroup_schema(self->group, db->db, schema);
@@ -2314,6 +2639,8 @@ APSWChangesetBuilder_output_stream(PyObject *self_, PyObject *const *fast_args, 
                                    PyObject *fast_kwnames)
 {
   APSWChangesetBuilder *self = (APSWChangesetBuilder *)self_;
+  CHECK_BUILDER_CLOSED(NULL);
+
   PyObject *output = NULL;
   {
     ChangesetBuilder_output_stream_CHECK;
@@ -2321,8 +2648,6 @@ APSWChangesetBuilder_output_stream(PyObject *self_, PyObject *const *fast_args, 
     ARG_MANDATORY ARG_Callable(output);
     ARG_EPILOG(NULL, ChangesetBuilder_output_stream_USAGE, );
   }
-
-  CHECK_BUILDER_CLOSED(NULL);
 
   int rc = sqlite3changegroup_output_strm(self->group, APSWSession_xOutput, output);
   SET_EXC(rc, NULL);
@@ -2618,9 +2943,16 @@ static PyMethodDef APSWChangesetBuilder_methods[] = {
   { "output_stream", (PyCFunction)APSWChangesetBuilder_output_stream, METH_FASTCALL | METH_KEYWORDS,
     ChangesetBuilder_output_stream_DOC },
   { "add", (PyCFunction)APSWChangesetBuilder_add, METH_FASTCALL | METH_KEYWORDS, ChangesetBuilder_add_DOC },
+  { "add_insert", (PyCFunction)APSWChangesetBuilder_add_insert, METH_FASTCALL | METH_KEYWORDS,
+    ChangesetBuilder_add_insert_DOC },
+  { "add_delete", (PyCFunction)APSWChangesetBuilder_add_delete, METH_FASTCALL | METH_KEYWORDS,
+    ChangesetBuilder_add_delete_DOC },
+  { "add_update", (PyCFunction)APSWChangesetBuilder_add_update, METH_FASTCALL | METH_KEYWORDS,
+    ChangesetBuilder_add_update_DOC },
   { "add_change", (PyCFunction)APSWChangesetBuilder_add_change, METH_FASTCALL | METH_KEYWORDS,
     ChangesetBuilder_add_change_DOC },
   { "schema", (PyCFunction)APSWChangesetBuilder_schema, METH_FASTCALL | METH_KEYWORDS, ChangesetBuilder_schema_DOC },
+  { "config", (PyCFunction)APSWChangesetBuilder_config, METH_VARARGS, ChangesetBuilder_config_DOC },
   { 0 },
 };
 

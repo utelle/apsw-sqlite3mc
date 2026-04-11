@@ -1463,9 +1463,9 @@ apswvfspy_xGetLastError(PyObject *self_, PyObject *Py_UNUSED(unused))
     goto error;
 
   PyTuple_SET_ITEM(res, 0, PyLong_FromLong(errval));
-  PyTuple_SET_ITEM(res, 1, text);
   if (PyErr_Occurred())
     goto error;
+  PyTuple_SET_ITEM(res, 1, text);
 
   sqlite3_free(buffer);
 
@@ -2256,10 +2256,7 @@ apswvfsfilepy_xRead(PyObject *self_, PyObject *const *fast_args, Py_ssize_t fast
     while (amount && PyBytes_AS_STRING(buffy)[amount - 1] == 0)
       amount--;
     if (_PyBytes_Resize(&buffy, amount))
-    {
-      Py_DECREF(buffy);
       return NULL;
-    }
 
     return buffy;
   }

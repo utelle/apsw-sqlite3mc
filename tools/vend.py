@@ -364,17 +364,16 @@ extras = [
         description="Command line SQL archive tool",
         lib_sqlite=True,
     ),
-    # these two are in the withdrawn 3.52.0 release
-    #Extra(
-    #    name="sqlite3_showtmlog",
-    #    type="executable",
-    #    sources=["tool/showtmlog.c"],
-    #    description="Makes human/csv readable output from a tmstmpvfs log file",
-    #),
-    #Extra(
-    #    name="tmstmpvfs",
-    #    description="VFS shim that writes timestamps and other tracing information to the reserved bytes of each page, and also generates corresponding log files",
-    #),
+    Extra(
+        name="sqlite3_showtmlog",
+        type="executable",
+        sources=["tool/showtmlog.c"],
+        description="Makes human/csv readable output from a tmstmpvfs log file",
+    ),
+    Extra(
+        name="tmstmpvfs",
+        description="VFS shim that writes timestamps and other tracing information to the reserved bytes of each page, and also generates corresponding log files",
+    ),
 ]
 
 import os
@@ -643,7 +642,8 @@ def do_build(what: set[str], verbose: bool, fail_fast: bool = False):
 
     SQLITE_LIB_NAME = "sqlite3_tool"
 
-    lib_enables = "CARRAY COLUMN_METADATA DBPAGE_VTAB DBSTAT_VTAB FTS4 FTS5 GEOPOLY MATH_FUNCTIONS PERCENTILE PREUPDATE_HOOK RTREE SESSION STAT4".split()
+    # required for sqlite3_rsync - enabling everything adds 320kb to wheel
+    lib_enables = "DBPAGE_VTAB".split()
 
     macros = [(f"SQLITE_ENABLE_{enable}", 1) for enable in lib_enables]
 
@@ -675,11 +675,22 @@ def do_build(what: set[str], verbose: bool, fail_fast: bool = False):
         lib_resource = resource_file(
             build_dir, compiler, Extra(name="libsqlite3", description="SQLite 3 library", doc="")
         )
+
+        # optimize just sqlite library for size - reduces size by 200kb
+        match ci.name:
+            case "gcc" | "clang":
+                optimize_for_size = ["-Os"]
+            case "msvc":
+                optimize_for_size = ["/O1"]
+            case _:
+                optimize_for_size = []
+
         lib_objs = compiler.compile(
             [str(pathlib.Path("sqlite3") / "sqlite3.c"), lib_resource] + zlib_sources,
             output_dir=str(build_dir),
             macros=macros,
             extra_preargs=compile_extra_preargs,
+            extra_postargs=optimize_for_size,
         )
         # dlopen libraries are different than shared libraries so flags have to be given
         so_link_flags = None
@@ -823,6 +834,7 @@ def do_build(what: set[str], verbose: bool, fail_fast: bool = False):
                         output_dir=str(build_dir),
                         include_dirs=include_dirs,
                         extra_preargs=compile_extra_preargs,
+                        extra_postargs=optimize_for_size if extra.type == "extension" else None,
                         macros=extra.defines,
                     )
 

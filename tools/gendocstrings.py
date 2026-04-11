@@ -56,7 +56,7 @@ subclassable = {"Connection", "Cursor", "VFS", "VFSFile", "zeroblob", "Session",
 def sqlite_links():
     global funclist, consts
 
-    basesqurl = "https://sqlite.org/"
+    basesqurl = os.environ.get("SQLITE_URL", "https://sqlite.org/")
     with tempfile.NamedTemporaryFile() as f:
         f.write(urllib.request.urlopen(basesqurl + "toc.db").read())
         f.flush()
@@ -582,7 +582,7 @@ def do_argparse(item):
             if param["default"]:
                 breakpoint()
                 pass
-        elif param["type"] in {"Sequence", "Iterable"}:
+        elif param["type"] in {"Sequence", "Iterable", "SQLiteValues"}:
             # note that we can't check for sequence because anything
             # that PySequence_Fast accepts is ok which includes sets,
             # iterators, generators etc and I can't test for all of

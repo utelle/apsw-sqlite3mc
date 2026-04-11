@@ -6,8 +6,8 @@ apsw
 A terminal interface to the APSW SQLite shell modelled after the SQLite shell
 -----------------------------------------------------------------------------
 
-:version: apsw 3.51.3.0
-:date: 13 March 2026
+:version: apsw 3.53.0.0
+:date: 9 April 2026
 :manual section: 1
 :manual group: General Commands Manual
 
@@ -194,6 +194,9 @@ from SQL.  You can use ``.help`` to see a list of all commands and
     
 ``.indices`` ``TABLE``
     Lists all indices on table ``TABLE``
+    
+``.limit`` ``?NAME`` ``VALUE?``
+    Show all limits, or set a specific one
     
 ``.load`` ``FILE`` ``?ENTRY?``
     Loads a SQLite extension library
@@ -544,6 +547,17 @@ example this will turn zero length strings into null::
 --------------
 
 Lists all indices on table ``TABLE``
+
+.limit ?NAME VALUE?
+-------------------
+
+Show all limits, or set a specific one
+
+With no arguments lists all limits.  Supply a name and value to change.  For
+example::
+
+   .limit attached 10
+
 
 .load FILE ?ENTRY?
 ------------------

@@ -343,10 +343,13 @@ APSWCursor_tp_traverse(PyObject *self_, visitproc visit, void *arg)
 {
   APSWCursor *self = (APSWCursor *)self_;
   Py_VISIT(self->connection);
+  Py_VISIT(self -> bindings);
   Py_VISIT(self->exectrace);
   Py_VISIT(self->rowtrace);
   Py_VISIT(self->convert_binding);
   Py_VISIT(self->convert_jsonb);
+  Py_VISIT(self->emiter);
+  Py_VISIT(self->emoriginalquery);
   for (int i = self->aiter_head; i < self->aiter_tail; i++)
     Py_VISIT(self->aiter_slots[i]);
   return 0;
@@ -384,6 +387,9 @@ convert_column_to_pyobject(APSWCursor *self, int col)
     const char *data;
     size_t len;
     data = (const char *)sqlite3_column_text(stmt, col);
+    if (!data)
+      return PyErr_NoMemory();
+
     len = sqlite3_column_bytes(stmt, col);
     return PyUnicode_FromStringAndSize(data, len);
   }
@@ -402,6 +408,10 @@ convert_column_to_pyobject(APSWCursor *self, int col)
     size_t len;
     data = sqlite3_column_blob(stmt, col);
     len = sqlite3_column_bytes(stmt, col);
+
+    /* if length is zero then a null pointer is returned */
+    if (!data && len)
+      return PyErr_NoMemory();
 
     PyObject *value = PyBytes_FromStringAndSize(data, len);
 
@@ -752,14 +762,9 @@ APSWCursor_dobinding(APSWCursor *self, int arg, PyObject *obj)
   else if (PyObject_TypeCheck(obj, &CArrayBindType) == 1)
   {
     CArrayBind *cab = (CArrayBind *)obj;
-#ifdef APSW_MODIFIED_CARRAY
     Py_INCREF(obj);
-    res = sqlite3_carray_bind_apsw(self->statement->vdbestatement, arg, cab->aData, cab->nData, cab->mFlags,
+    res = sqlite3_carray_bind_v2(self->statement->vdbestatement, arg, cab->aData, cab->nData, cab->mFlags,
                                    CArrayBind_bind_destructor, obj);
-#else
-    res = sqlite3_carray_bind(self->statement->vdbestatement, arg, cab->aData, cab->nData, cab->mFlags,
-                              SQLITE_TRANSIENT);
-#endif
   }
 #endif
   else if (CONVERT_BINDING)
@@ -854,7 +859,13 @@ APSWCursor_dobindings(APSWCursor *self)
 
       if (PyDict_Check(self->bindings) && allow_missing_dict_bindings)
       {
-        obj = PyDict_GetItemString(self->bindings, key);
+        PyObject *keys = PyUnicode_FromString(key);
+        if (!keys)
+          return -1;
+        obj = PyDict_GetItemWithError(self->bindings, keys);
+        Py_DECREF(keys);
+        if (PyErr_Occurred())
+          return -1;
         /* it returns a borrowed reference */
         Py_XINCREF(obj);
       }

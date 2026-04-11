@@ -990,8 +990,13 @@ class Blob:
 @final
 class ChangesetBuilder:
     """This object wraps a `sqlite3_changegroup <https://sqlite.org/session/changegroup.html>`__
-    letting you concatenate changesets and individual :class:`TableChange` into one larger
-    changeset."""
+    to build a changeset or patchset.   The contents can come from:
+
+    * Existing changesets
+    * Individual :class:`TableChange`
+    * :meth:`add_insert`, :meth:`add_update`, :meth:`add_delete`
+
+    See the :ref:`example <example_changesetbuilder>`"""
 
     def add(self, changeset: ChangesetInput) -> None:
         """:param changeset: The changeset as the bytes, or a stream
@@ -1012,10 +1017,60 @@ class ChangesetBuilder:
         Calls: `sqlite3changegroup_add_change <https://sqlite.org/session/sqlite3changegroup_add_change.html>`__"""
         ...
 
+    def add_delete(self, table: str, indirect: bool, row: SQLiteValues) -> None:
+        """Adds an ``delete`` change row.  You must have called :meth:`schema` first so
+         the table can be verified.
+
+        .. seealso::
+
+           * :meth:`add_insert`
+           * :meth:`add_update`
+
+
+         Calls: `sqlite3changegroup_change_begin <https://sqlite.org/session/sqlite3changegroup_change_begin.html>`__
+         Calls: `sqlite3changegroup_change_finish <https://sqlite.org/session/sqlite3changegroup_change_finish.html>`__"""
+        ...
+
+    def add_insert(self, table: str, indirect: bool, row: SQLiteValues) -> None:
+        """Adds an ``insert`` change row.  You must have called :meth:`schema` first so
+        the table can be verified.
+
+        .. seealso::
+
+          * :meth:`add_delete`
+          * :meth:`add_update`
+
+        Calls: `sqlite3changegroup_change_begin <https://sqlite.org/session/sqlite3changegroup_change_begin.html>`__
+        Calls: `sqlite3changegroup_change_finish <https://sqlite.org/session/sqlite3changegroup_change_finish.html>`__"""
+        ...
+
+    def add_update(self, table: str, indirect: bool, old: SQLiteValues, new: SQLiteValues) -> None:
+        """Adds an ``update`` change giving old and new rows. You must have called :meth:`schema` first so
+        the table can be verified.
+
+        See `sqlite3changegroup_change_finish <https://sqlite.org/session/sqlite3changegroup_change_finish.html>`__
+        for details on which columns of old and new you must provide values for.  Where no value should be
+        provided, use :attr:`apsw.no_change`.
+
+        .. seealso::
+
+          * :meth:`add_insert`
+          * :meth:`add_delete`
+
+        Calls: `sqlite3changegroup_change_begin <https://sqlite.org/session/sqlite3changegroup_change_begin.html>`__
+        Calls: `sqlite3changegroup_change_finish <https://sqlite.org/session/sqlite3changegroup_change_finish.html>`__"""
+        ...
+
     def close(self) -> None:
         """Releases the builder
 
         Calls: `sqlite3changegroup_delete <https://sqlite.org/session/sqlite3changegroup_delete.html>`__"""
+        ...
+
+    def config(self, op: int, *args: Any) -> int:
+        """Configures the changegroup.
+
+        Calls: `sqlite3changegroup_config <https://sqlite.org/session/sqlite3changegroup_config.html>`__"""
         ...
 
     def __init__(self):
@@ -4465,6 +4520,8 @@ SQLITE_CARRAY_INT64: int = 1
 """For `Datatypes for the CARRAY table-valued function <https://sqlite.org/c3ref/c_carray_blob.html>'__"""
 SQLITE_CARRAY_TEXT: int = 3
 """For `Datatypes for the CARRAY table-valued function <https://sqlite.org/c3ref/c_carray_blob.html>'__"""
+SQLITE_CHANGEGROUP_CONFIG_PATCHSET: int = 1
+"""For `Options for sqlite3changegroup_config() <https://sqlite.org/session/c_changegroup_config_patchset.html>'__"""
 SQLITE_CHANGESETAPPLY_FKNOACTION: int = 8
 """For `Flags for sqlite3changeset_apply_v2 <https://sqlite.org/session/c_changesetapply_fknoaction.html>'__"""
 SQLITE_CHANGESETAPPLY_IGNORENOOP: int = 4
@@ -4635,6 +4692,8 @@ SQLITE_DBCONFIG_ENABLE_TRIGGER: int = 1003
 """For `Database Connection Configuration Options <https://sqlite.org/c3ref/c_dbconfig_defensive.html>'__"""
 SQLITE_DBCONFIG_ENABLE_VIEW: int = 1015
 """For `Database Connection Configuration Options <https://sqlite.org/c3ref/c_dbconfig_defensive.html>'__"""
+SQLITE_DBCONFIG_FP_DIGITS: int = 1023
+"""For `Database Connection Configuration Options <https://sqlite.org/c3ref/c_dbconfig_defensive.html>'__"""
 SQLITE_DBCONFIG_LEGACY_ALTER_TABLE: int = 1012
 """For `Database Connection Configuration Options <https://sqlite.org/c3ref/c_dbconfig_defensive.html>'__"""
 SQLITE_DBCONFIG_LEGACY_FILE_FORMAT: int = 1016
@@ -4643,7 +4702,7 @@ SQLITE_DBCONFIG_LOOKASIDE: int = 1001
 """For `Database Connection Configuration Options <https://sqlite.org/c3ref/c_dbconfig_defensive.html>'__"""
 SQLITE_DBCONFIG_MAINDBNAME: int = 1000
 """For `Database Connection Configuration Options <https://sqlite.org/c3ref/c_dbconfig_defensive.html>'__"""
-SQLITE_DBCONFIG_MAX: int = 1022
+SQLITE_DBCONFIG_MAX: int = 1023
 """For `Database Connection Configuration Options <https://sqlite.org/c3ref/c_dbconfig_defensive.html>'__"""
 SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE: int = 1006
 """For `Database Connection Configuration Options <https://sqlite.org/c3ref/c_dbconfig_defensive.html>'__"""
@@ -4999,6 +5058,8 @@ SQLITE_LIMIT_LENGTH: int = 0
 """For `Run-Time Limit Categories <https://sqlite.org/c3ref/c_limit_attached.html>'__"""
 SQLITE_LIMIT_LIKE_PATTERN_LENGTH: int = 8
 """For `Run-Time Limit Categories <https://sqlite.org/c3ref/c_limit_attached.html>'__"""
+SQLITE_LIMIT_PARSER_DEPTH: int = 12
+"""For `Run-Time Limit Categories <https://sqlite.org/c3ref/c_limit_attached.html>'__"""
 SQLITE_LIMIT_SQL_LENGTH: int = 1
 """For `Run-Time Limit Categories <https://sqlite.org/c3ref/c_limit_attached.html>'__"""
 SQLITE_LIMIT_TRIGGER_DEPTH: int = 10
@@ -5100,6 +5161,8 @@ SQLITE_PERM: int = 3
 SQLITE_PRAGMA: int = 19
 """For `Authorizer Action Codes <https://sqlite.org/c3ref/c_alter_table.html>'__"""
 SQLITE_PREPARE_DONT_LOG: int = 16
+"""For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_dont_log.html>'__"""
+SQLITE_PREPARE_FROM_DDL: int = 32
 """For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_dont_log.html>'__"""
 SQLITE_PREPARE_NORMALIZE: int = 2
 """For `Prepare Flags <https://sqlite.org/c3ref/c_prepare_dont_log.html>'__"""
@@ -5324,12 +5387,13 @@ SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE SQLITE_DBCONFIG_ENABLE_COMMENTS
 SQLITE_DBCONFIG_ENABLE_FKEY SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER
 SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION SQLITE_DBCONFIG_ENABLE_QPSG
 SQLITE_DBCONFIG_ENABLE_TRIGGER SQLITE_DBCONFIG_ENABLE_VIEW
-SQLITE_DBCONFIG_LEGACY_ALTER_TABLE SQLITE_DBCONFIG_LEGACY_FILE_FORMAT
-SQLITE_DBCONFIG_LOOKASIDE SQLITE_DBCONFIG_MAINDBNAME
-SQLITE_DBCONFIG_MAX SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE
-SQLITE_DBCONFIG_RESET_DATABASE SQLITE_DBCONFIG_REVERSE_SCANORDER
-SQLITE_DBCONFIG_STMT_SCANSTATUS SQLITE_DBCONFIG_TRIGGER_EQP
-SQLITE_DBCONFIG_TRUSTED_SCHEMA SQLITE_DBCONFIG_WRITABLE_SCHEMA"""
+SQLITE_DBCONFIG_FP_DIGITS SQLITE_DBCONFIG_LEGACY_ALTER_TABLE
+SQLITE_DBCONFIG_LEGACY_FILE_FORMAT SQLITE_DBCONFIG_LOOKASIDE
+SQLITE_DBCONFIG_MAINDBNAME SQLITE_DBCONFIG_MAX
+SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE SQLITE_DBCONFIG_RESET_DATABASE
+SQLITE_DBCONFIG_REVERSE_SCANORDER SQLITE_DBCONFIG_STMT_SCANSTATUS
+SQLITE_DBCONFIG_TRIGGER_EQP SQLITE_DBCONFIG_TRUSTED_SCHEMA
+SQLITE_DBCONFIG_WRITABLE_SCHEMA"""
 
 mapping_db_status: dict[str | int, int | str]
 """Status Parameters for database connections mapping names to int and int to names.
@@ -5443,9 +5507,10 @@ Doc at https://sqlite.org/c3ref/c_limit_attached.html
 
 SQLITE_LIMIT_ATTACHED SQLITE_LIMIT_COLUMN SQLITE_LIMIT_COMPOUND_SELECT
 SQLITE_LIMIT_EXPR_DEPTH SQLITE_LIMIT_FUNCTION_ARG SQLITE_LIMIT_LENGTH
-SQLITE_LIMIT_LIKE_PATTERN_LENGTH SQLITE_LIMIT_SQL_LENGTH
-SQLITE_LIMIT_TRIGGER_DEPTH SQLITE_LIMIT_VARIABLE_NUMBER
-SQLITE_LIMIT_VDBE_OP SQLITE_LIMIT_WORKER_THREADS"""
+SQLITE_LIMIT_LIKE_PATTERN_LENGTH SQLITE_LIMIT_PARSER_DEPTH
+SQLITE_LIMIT_SQL_LENGTH SQLITE_LIMIT_TRIGGER_DEPTH
+SQLITE_LIMIT_VARIABLE_NUMBER SQLITE_LIMIT_VDBE_OP
+SQLITE_LIMIT_WORKER_THREADS"""
 
 mapping_locking_level: dict[str | int, int | str]
 """File Locking Levels mapping names to int and int to names.
@@ -5471,8 +5536,9 @@ mapping_prepare_flags: dict[str | int, int | str]
 """Prepare Flags mapping names to int and int to names.
 Doc at https://sqlite.org/c3ref/c_prepare_dont_log.html
 
-SQLITE_PREPARE_DONT_LOG SQLITE_PREPARE_NORMALIZE
-SQLITE_PREPARE_NO_VTAB SQLITE_PREPARE_PERSISTENT"""
+SQLITE_PREPARE_DONT_LOG SQLITE_PREPARE_FROM_DDL
+SQLITE_PREPARE_NORMALIZE SQLITE_PREPARE_NO_VTAB
+SQLITE_PREPARE_PERSISTENT"""
 
 mapping_result_codes: dict[str | int, int | str]
 """Result Codes mapping names to int and int to names.
@@ -5485,6 +5551,12 @@ SQLITE_LOCKED SQLITE_MISMATCH SQLITE_MISUSE SQLITE_NOLFS SQLITE_NOMEM
 SQLITE_NOTADB SQLITE_NOTFOUND SQLITE_NOTICE SQLITE_OK SQLITE_PERM
 SQLITE_PROTOCOL SQLITE_RANGE SQLITE_READONLY SQLITE_ROW SQLITE_SCHEMA
 SQLITE_TOOBIG SQLITE_WARNING"""
+
+mapping_session_changegroup_config_options: dict[str | int, int | str]
+"""Options for sqlite3changegroup_config() mapping names to int and int to names.
+Doc at https://sqlite.org/session/c_changegroup_config_patchset.html
+
+SQLITE_CHANGEGROUP_CONFIG_PATCHSET"""
 
 mapping_session_changeset_apply_v2_flags: dict[str | int, int | str]
 """Flags for sqlite3changeset_apply_v2 mapping names to int and int to names.

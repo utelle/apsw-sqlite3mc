@@ -106,12 +106,8 @@ API Reference
 #include "sqlite3.h"
 #endif
 
-#if SQLITE_VERSION_NUMBER < 3051000
-#error Your SQLite version is too old.  It must be at least 3.51
-#endif
-
-#ifndef SQLITE_UTF8_ZT
-#define SQLITE_UTF8_ZT SQLITE_UTF8
+#if SQLITE_VERSION_NUMBER < 3053000
+#error Your SQLite version is too old.  It must be at least 3.53
 #endif
 
 #include "sqlite_debug.h"
@@ -433,6 +429,8 @@ apsw_connections(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(unused))
 {
   Py_ssize_t i;
   PyObject *res = PyList_New(0), *item = NULL;
+  if (!res)
+    goto fail;
   for (i = 0; i < PyList_GET_SIZE(the_connections); i++)
   {
     if (PyWeakref_GetRef(PyList_GET_ITEM(the_connections, i), &item) < 0)
@@ -1833,7 +1831,10 @@ apsw_sleep(PyObject *Py_UNUSED(module), PyObject *const *fast_args, Py_ssize_t f
   if (milliseconds < 0)
     milliseconds = 0;
 
-  res = sqlite3_sleep(milliseconds);
+  Py_BEGIN_ALLOW_THREADS
+    res = sqlite3_sleep(milliseconds);
+  Py_END_ALLOW_THREADS;
+
   return PyLong_FromLong(res);
 }
 
@@ -1949,15 +1950,18 @@ static int
 apsw_module_setattr(PyObject *module, PyObject *name, PyObject *value)
 {
   if (module_is_initialized
-      && (PyObject_RichCompareBool(name, apst.async_controller, Py_EQ) == 1
-          || PyObject_RichCompareBool(name, apst.async_cursor_prefetch, Py_EQ) == 1))
+      && (PyObject_RichCompareBool(apst.async_controller, name, Py_EQ) == 1
+          || (!PyErr_Occurred() && PyObject_RichCompareBool(apst.async_cursor_prefetch, name, Py_EQ) == 1)))
   {
     PyErr_Format(PyExc_AttributeError,
                  "Do not overwrite apsw.%S.  It is a context var - use its set method in your context", name);
     return -1;
   }
 
-  if (module_is_initialized && (PyObject_RichCompareBool(name, apst.async_run_coro, Py_EQ) == 1))
+  if (PyErr_Occurred())
+    return -1;
+
+  if (module_is_initialized && (PyObject_RichCompareBool(apst.async_run_coro, name, Py_EQ) == 1))
   {
     if (!Py_IsNone(value) && !PyCallable_Check(value))
     {
@@ -1973,7 +1977,7 @@ apsw_module_setattr(PyObject *module, PyObject *name, PyObject *value)
 static PyObject *
 apsw_module_getattr(PyObject *module, PyObject *name)
 {
-  if (module_is_initialized && (PyObject_RichCompareBool(name, apst.async_run_coro, Py_EQ) == 1))
+  if (module_is_initialized && (PyObject_RichCompareBool(apst.async_run_coro, name, Py_EQ) == 1))
   {
     PyObject *runner = PyDict_GetItemWithError(PyThreadState_GetDict(), async_run_coro_sentinel);
     if (PyErr_Occurred())
@@ -1982,13 +1986,16 @@ apsw_module_getattr(PyObject *module, PyObject *name)
       Py_RETURN_NONE;
     return Py_NewRef(runner);
   }
-  if (module_is_initialized && (PyObject_RichCompareBool(name, apst.main, Py_EQ) == 1))
+  if (PyErr_Occurred())
+    return NULL;
+  if (module_is_initialized && (PyObject_RichCompareBool(apst.main, name, Py_EQ) == 1))
     return PyImport_ImportModuleAttr(apst.apsw_shell, apst.main);
-
-  if (module_is_initialized && (PyObject_RichCompareBool(name, apst.Shell, Py_EQ) == 1))
+  if (PyErr_Occurred())
+    return NULL;
+  if (module_is_initialized && (PyObject_RichCompareBool(apst.Shell, name, Py_EQ) == 1))
     return PyImport_ImportModuleAttr(apst.apsw_shell, apst.Shell);
 
-  return PyObject_GenericGetAttr(module, name);
+  return PyErr_Occurred() ? NULL : PyObject_GenericGetAttr(module, name);
 }
 
 static PyTypeObject ApswModuleType = {
@@ -2091,41 +2098,26 @@ PyInit_apsw(void)
   if (init_apsw_strings())
     goto fail;
 
-/* we can't avoid leaks with failures until multi-phase initialisation is done */
-#define ADD(name, item)                                                                                                \
-  do                                                                                                                   \
-  {                                                                                                                    \
-    if (PyModule_AddObjectRef(m, #name, (PyObject *)&item))                                                            \
-      goto fail;                                                                                                       \
-  } while (0)
-
-  ADD(Connection, ConnectionType);
-  ADD(Cursor, APSWCursorType);
-  ADD(Blob, APSWBlobType);
-  ADD(Backup, APSWBackupType);
-  ADD(zeroblob, ZeroBlobBindType);
-  ADD(VFS, APSWVFSType);
-  ADD(VFSFile, APSWVFSFileType);
-  ADD(VFSFcntlPragma, apswfcntl_pragma_Type);
-  ADD(URIFilename, APSWURIFilenameType);
-  ADD(IndexInfo, SqliteIndexInfoType);
-  ADD(FTS5Tokenizer, APSWFTS5TokenizerType);
-  ADD(FTS5ExtensionApi, APSWFTS5ExtensionAPIType);
-  ADD(pyobject, PyObjectBindType);
+  if (PyModule_AddType(m, &ConnectionType) || PyModule_AddType(m, &ConnectionType)
+      || PyModule_AddType(m, &APSWCursorType) || PyModule_AddType(m, &APSWBlobType)
+      || PyModule_AddType(m, &APSWBackupType) || PyModule_AddType(m, &ZeroBlobBindType)
+      || PyModule_AddType(m, &APSWVFSType) || PyModule_AddType(m, &APSWVFSFileType)
+      || PyModule_AddType(m, &apswfcntl_pragma_Type) || PyModule_AddType(m, &APSWURIFilenameType)
+      || PyModule_AddType(m, &SqliteIndexInfoType) || PyModule_AddType(m, &APSWFTS5TokenizerType)
+      || PyModule_AddType(m, &APSWFTS5ExtensionAPIType) || PyModule_AddType(m, &PyObjectBindType)
 #ifdef SQLITE_ENABLE_CARRAY
-  ADD(carray, CArrayBindType);
+      || PyModule_AddType(m, &CArrayBindType)
 #endif
 #ifdef SQLITE_ENABLE_SESSION
-  ADD(Session, APSWSessionType);
-  ADD(Changeset, APSWChangesetType);
-  ADD(ChangesetBuilder, APSWChangesetBuilderType);
-  ADD(TableChange, APSWTableChangeType);
-  ADD(Rebaser, APSWRebaserType);
+      || PyModule_AddType(m, &APSWSessionType) || PyModule_AddType(m, &APSWChangesetType)
+      || PyModule_AddType(m, &APSWChangesetBuilderType) || PyModule_AddType(m, &APSWTableChangeType)
+      || PyModule_AddType(m, &APSWRebaserType)
 #endif
 #ifdef SQLITE_ENABLE_PREUPDATE_HOOK
-  ADD(PreUpdate, PreUpdateType);
+      || PyModule_AddType(m, &PreUpdateType)
 #endif
-#undef ADD
+  )
+    goto fail;
 
   /** .. attribute:: connection_hooks
        :type: list[Callable[[Connection], None]]
@@ -2305,24 +2297,34 @@ modules etc. For example::
   if (add_apsw_constants(m))
     goto fail;
 
-  PyModule_AddObject(m, "compile_options", get_compile_options());
-  PyModule_AddObject(m, "keywords", get_keywords());
-
-  if (!PyErr_Occurred())
+  PyObject *tmp = get_compile_options();
+  if (!tmp)
+    goto fail;
+  if (PyModule_AddObject(m, "compile_options", tmp))
   {
-    collections_abc_Mapping = PyImport_ImportModuleAttr(apst.collections_abc, apst.Mapping);
-
-    if (!collections_abc_Mapping)
-      goto fail;
+    Py_DECREF(tmp);
+    goto fail;
   }
+  tmp = get_keywords();
+  if (!tmp)
+    goto fail;
+  if (PyModule_AddObject(m, "keywords", tmp))
+  {
+    Py_DECREF(tmp);
+    goto fail;
+  }
+
+  assert(!PyErr_Occurred());
+  collections_abc_Mapping = PyImport_ImportModuleAttr(apst.collections_abc, apst.Mapping);
+
+  if (!collections_abc_Mapping)
+    goto fail;
 
   PyModule_AddStringConstant(m, "mc_version", SQLITE3MC_VERSION_STRING);
 
-  if (!PyErr_Occurred())
-  {
-    module_is_initialized = 1;
-    return m;
-  }
+  assert(!PyErr_Occurred());
+  module_is_initialized = 1;
+  return m;
 
 fail:
   assert(PyErr_Occurred());

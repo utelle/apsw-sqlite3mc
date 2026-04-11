@@ -1,8 +1,8 @@
 
-SQLITEVERSION=3.51.3
+SQLITEVERSION=3.53.0
 APSWSUFFIX=.0
 
-RELEASEDATE="13 March 2026"
+RELEASEDATE="9 April 2026"
 
 VERSION=$(SQLITEVERSION)$(APSWSUFFIX)
 VERDIR=apsw-$(VERSION)
@@ -96,7 +96,6 @@ doc-depends: ## pip installs packages needed to build doc
 
 dev-depends: ## pip installs packages useful for development (none are necessary except setuptools)
 	$(PYTHON) -m pip install -U --upgrade-strategy eager build wheel setuptools pip
-	$(PYTHON) -m pip install -U --upgrade-strategy eager coverage anyio trio
 
 # This is probably gnu make specific but only developers use this makefile
 $(GENDOCS): doc/%.rst: src/%.c tools/code2rst.py  tools/tocupdate.sql
@@ -199,7 +198,6 @@ fossil: ## Grabs latest trunk from SQLite source control, extracts and builds in
 	set -e ; cd sqlite3 ; curl --output - https://sqlite.org/vec1/tarball/vec1.tar.gz | tar xfz -
 	set -e ; cd sqlite3 ; curl --output - https://sqlite.org/sqlar/tarball/sqlar.tar.gz | tar xfz -
 	set -e ; rm -rf sqlite3/zlib || true ; mkdir -p sqlite3/zlib ; cd sqlite3/zlib; curl --output -  https://www.zlib.net/current/zlib.tar.gz | tar xfz - --strip-components=1
-	$(PYTHON) setup.py patch
 
 # the funky test stuff is to exit successfully when grep has rc==1 since that means no lines found.
 showsymbols:  ## Finds any C symbols that aren't static(private)
@@ -286,7 +284,7 @@ src/_unicodedb.c: tools/ucdprops2code.py ## Update generated Unicode database lo
 	$(PYTHON) tools/ucdprops2code.py $@
 
 # building a python debug interpreter
-PYDEBUG_VER=3.14.3
+PYDEBUG_VER=3.14.4
 PYDEBUG_DIR=/space/pydebug
 PYTHREAD_VER=$(PYDEBUG_VER)
 PYTHREAD_DIR=/space/pythread
