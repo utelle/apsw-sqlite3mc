@@ -141,6 +141,7 @@ class MultipleCiphers(unittest.TestCase):
         for config in (
             {
                 "plaintext_header_size": 64,
+                "cipher_salt": "B1349F791FE98DDD1648406C5554BD1F",
                 "cipher": "sqlcipher",
                 "key": "one",
             },
