@@ -287,6 +287,9 @@ def apply_encryption(db, **kwargs):
         # then anything with legacy in the name
         if "legacy" in pragma:
             return 3
+        # explicit cipher salt
+        if pragma == "cipher_salt":
+            return 99
         # all except keys
         if pragma not in {"key", "hexkey", "rekey", "hexrekey"}:
             return 3
@@ -300,7 +303,7 @@ def apply_encryption(db, **kwargs):
     for pragma, value in sorted(kwargs.items(), key=pragma_order):
         # if the pragma was understood and in range we get the value
         # back, while key related ones return 'ok'
-        expected = "ok" if pragma_order((pragma, value)) == 100 else str(value)
+        expected = "ok" if pragma_order((pragma, value)) >= 99 else str(value)
         if db.pragma(pragma, value) != expected:
             raise ValueError(f"Failed to configure {pragma=}")
 
