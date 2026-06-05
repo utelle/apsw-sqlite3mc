@@ -306,7 +306,7 @@ class fetch(Command):
             for desc, url, replace in (
                 (
                     "experimental vec1 extension source",
-                    "https://sqlite.org/vec1/zip/vec1-20260505104119-eb38e10fef.zip",
+                    "https://sqlite.org/vec1/zip/vec1-20260526165101-762865e44d.zip",
                     "sqlite3/vec1",
                 ),
                 (
@@ -1019,6 +1019,7 @@ if __name__ == "__main__":
             "Framework :: AsyncIO",
             "Framework :: AnyIO",
             "Programming Language :: Python :: Implementation :: CPython",
+            "Typing :: Typed",
         ],
         keywords=["database", "sqlite", "encryption"],
         license="OSI Approved",
