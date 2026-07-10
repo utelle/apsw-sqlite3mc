@@ -122,7 +122,12 @@ class MultipleCiphers(unittest.TestCase):
             time.sleep(0.5)
             self.db.execute("end")
 
-        threading.Thread(target=busy).start()
+        t = threading.Thread(target=busy)
+        try:
+            t.start()
+        except RuntimeError:
+            # wasm can't start thread
+            return
 
         self.assertRaises(apsw.BusyError, apply_encryption, con2, key="hello world")
         con2.set_busy_timeout(1000)
