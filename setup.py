@@ -991,8 +991,7 @@ fetch = mc_fetch
 depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c" and "unicode" not in f]
 
 if __name__ == "__main__":
-    is_pyodide = os.environ.get("CIBUILDWHEEL") == "1" and
-    os.environ.get("CIBW_PLATFORM") == "pyodide"
+    is_pyodide = os.environ.get("CIBUILDWHEEL") == "1" and os.environ.get("CIBW_PLATFORM") == "pyodide"
     os.makedirs("apsw/sqlite_extra_binaries", exist_ok=True)
     setup(
         name="apsw_sqlite3mc",
