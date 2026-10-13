@@ -305,11 +305,6 @@ class fetch(Command):
 
             for desc, url, replace in (
                 (
-                    "experimental vec1 extension source",
-                    "https://sqlite.org/vec1/zip/vec1-20260526165101-762865e44d.zip",
-                    "sqlite3/vec1",
-                ),
-                (
                     "sqlar tool source",
                     "https://sqlite.org/sqlar/zip/sqlar-src-20180107193712-4824e73896.zip",
                     "sqlite3/sqlar",
@@ -559,10 +554,6 @@ class apsw_build_ext(beparent):
             ext.define_macros.append(("SQLITE_DEBUG", "1"))
         else:
             ext.define_macros.append(("NDEBUG", "1"))
-
-        # fork checker?
-        if hasattr(os, "fork"):
-            ext.define_macros.append(("APSW_FORK_CHECKER", "1"))
 
         # SQLite 3
         # Look for amalgamation in sqlite3 subdirectory
