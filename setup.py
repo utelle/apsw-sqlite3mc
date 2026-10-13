@@ -1031,8 +1031,7 @@ if __name__ == "__main__":
                 define_macros=define_macros,
                 depends=depends,
                 extra_link_args=[
-                    "-sEXPORTED_FUNCTIONS=['____em_js__wasm_crypto_getran
-                    dom']",
+                    "-sEXPORTED_FUNCTIONS=['____em_js__wasm_crypto_getrandom']",
                 ]
                 if is_pyodide
                 else None,
