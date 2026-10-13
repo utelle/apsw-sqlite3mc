@@ -295955,7 +295955,7 @@ void sqlcipher_hmac(int algorithm, unsigned char* key, int nkey, unsigned char* 
  */
 #if defined(__wasm__) || defined(__wasi__)
 
-#if defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__) && !defined(SQLITE3MC_WASM_USE_GETENTROPY)
 #include <emscripten.h>
 
  /* Calls the Web Crypto API directly instead of relying on an opaque

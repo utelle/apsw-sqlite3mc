@@ -992,6 +992,8 @@ depends = [f for f in glob.glob("src/*.[ch]") if f != "src/apsw.c" and "unicode"
 
 if __name__ == "__main__":
     is_pyodide = os.environ.get("CIBUILDWHEEL") == "1" and os.environ.get("CIBW_PLATFORM") == "pyodide"
+    if is_pyodide:
+        define_macros.append(("SQLITE3MC_WASM_USE_GETENTROPY", "1"))
     os.makedirs("apsw/sqlite_extra_binaries", exist_ok=True)
     setup(
         name="apsw_sqlite3mc",
