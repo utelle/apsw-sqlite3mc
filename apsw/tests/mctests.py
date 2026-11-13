@@ -55,7 +55,7 @@ class MultipleCiphers(unittest.TestCase):
     def testBackup(self):
         "Check backup restrictions"
         # https://github.com/utelle/SQLite3MultipleCiphers/issues/158
-        apply_encryption(self.db, key="hello world", cipher="rc4")
+        apply_encryption(self.db, key="hello world", cipher="ascon128")
         self.db.execute("create table x(y); insert into x values(randomblob(65536))")
 
         # to and from memory should not work
@@ -76,7 +76,7 @@ class MultipleCiphers(unittest.TestCase):
         self.db.execute("vacuum")
 
         # and not when put back
-        apply_encryption(self.db, rekey="world hello", cipher="rc4")
+        apply_encryption(self.db, rekey="world hello", cipher="ascon128")
         self.assertRaisesRegex(
             apsw.SQLError, ".*incompatible source and target database.*", tmp.backup, "main", self.db, "main"
         )
@@ -258,7 +258,7 @@ class MultipleCiphers(unittest.TestCase):
         con2 = apsw.Connection(self.db.filename)
         # encrypted
         self.assertRaises(apsw.NotADBError, con2.execute, "select length(y) from x")
-        apply_encryption(self.db, hexrekey="")
+        apply_encryption(self.db, rekey="")
         # not encrypted
         self.assertEqual(32768, con2.execute("select length(y) from x").get)
 
