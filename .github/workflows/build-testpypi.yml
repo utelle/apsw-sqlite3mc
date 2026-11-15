@@ -15,7 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build ${{ matrix.os }} ${{ matrix.pyver }}
+      - name: DNS-Test
+        if: runner.os == 'Linux'
+        run: |
+          cat /etc/resolv.conf
+          nslookup pypi.org || true
+          docker run --rm alpine nslookup pypi.org || true
+
+    - name: Build ${{ matrix.os }} ${{ matrix.pyver }}
         uses: pypa/cibuildwheel@v4.3
         env:
           CIBW_BUILD: ${{ matrix.pyver }}-*
