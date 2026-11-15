@@ -26,6 +26,7 @@ jobs:
         uses: pypa/cibuildwheel@v4.3
         env:
           CIBW_BUILD: ${{ matrix.pyver }}-*
+          CIBW_BEFORE_ALL_LINUX: "cat /etc/resolv.conf; getent ahosts pypi.org; echo getent-exit=$?; true"
           CIBW_BEFORE_BUILD: python -c "import shutil ; shutil.copyfile('tools/setup-pypi.cfg','setup.apsw')"
           CIBW_TEST_COMMAND: python -X faulthandler -m apsw.tests -v
           APSW_HEAVY_DURATION: 2
