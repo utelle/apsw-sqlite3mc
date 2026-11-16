@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-       os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, windows-11-arm, macos-15-intel, macos-14]
+       os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest, windows-11-arm, macos-15-intel, macos-15]
        pyver: [cp311, cp312, cp313, cp314, cp314t, cp315, cp315t]
 
     steps:
@@ -20,7 +20,7 @@ jobs:
         env:
           CIBW_BUILD: ${{ matrix.pyver }}-*
           CIBW_BEFORE_BUILD: python -c "import shutil ; shutil.copyfile('tools/setup-pypi.cfg','setup.apsw')"
-          CIBW_TEST_COMMAND: python -m apsw.tests -v
+          CIBW_TEST_COMMAND: python -X faulthandler -m apsw.tests -v
           APSW_HEAVY_DURATION: 2
 
       - uses: actions/upload-artifact@v7
